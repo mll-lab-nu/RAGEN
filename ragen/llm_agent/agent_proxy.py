@@ -44,7 +44,7 @@ class VllmWrapperWg: # Thi is a developing class for eval and test
 			# min_p=0.1,
 		)
 
-	def generate_sequences(self, lm_inputs: DataProto, mode: str = "singleturn", skip_generation: bool = False):
+	def generate_sequences(self, lm_inputs: DataProto):
 		"""
 		Convert the input ids to text, and then generate the sequences. Finally create a dataproto. 
 		This aligns with the verl Worker Group interface.
@@ -52,7 +52,7 @@ class VllmWrapperWg: # Thi is a developing class for eval and test
 		# NOTE: free_cache_engine is not used in the vllm wrapper. Only used in the verl vllm.
 		# cache_action = lm_inputs.meta_info.get('cache_action', None)
 
-		if skip_generation:
+		if lm_inputs.meta_info.get("skip_generation", False):
 			return lm_inputs
 
 		input_ids = lm_inputs.batch['input_ids']
@@ -90,13 +90,13 @@ class ApiCallingWrapperWg:
         print(f'API-based LLM ({model_info.provider_name} - {model_info.model_name}) initialized')
 
 
-    def generate_sequences(self, lm_inputs: DataProto, mode: str = "singleturn", skip_generation: bool = False) -> DataProto:
+    def generate_sequences(self, lm_inputs: DataProto) -> DataProto:
         """
         Convert the input ids to text, make API calls to generate responses, 
         and create a DataProto with the results.
         """
 
-        if skip_generation:
+        if lm_inputs.meta_info.get("skip_generation", False):
             return lm_inputs
 
         messages_list = lm_inputs.non_tensor_batch['messages_list'].tolist()
@@ -132,21 +132,21 @@ class LLMAgentProxy:
 		self.tokenizer = tokenizer
 		self._last_padded_inputs = None
 
-	def generate_sequences(self, lm_inputs: DataProto, mode: str = "singleturn", skip_generation: bool = False):
+	def generate_sequences(self, lm_inputs: DataProto):
 		# TODO: add kv cache both for the vllm wrapper here and for verl vllm.
 		if isinstance(self.actor_wg, RayWorkerGroup):
 			padded_lm_inputs, pad_size = pad_dataproto_to_divisor(lm_inputs, self.actor_wg.world_size)
 			self._last_padded_inputs = padded_lm_inputs
 			padded_lm_outputs = self.actor_wg.generate_sequences(
-				padded_lm_inputs, mode=mode, skip_generation=skip_generation
+				padded_lm_inputs
 			)
-			if skip_generation:
+			if lm_inputs.meta_info.get("skip_generation", False):
 				return lm_inputs
 			lm_outputs = unpad_dataproto(padded_lm_outputs, pad_size=pad_size)
 			lm_outputs.meta_info = lm_inputs.meta_info
 			lm_outputs.non_tensor_batch = lm_inputs.non_tensor_batch
 		elif isinstance(self.actor_wg, VllmWrapperWg) or isinstance(self.actor_wg, ApiCallingWrapperWg):
-			lm_outputs = self.actor_wg.generate_sequences(lm_inputs, mode=mode, skip_generation=skip_generation)
+			lm_outputs = self.actor_wg.generate_sequences(lm_inputs)
 		else:
 			raise ValueError(f"Unsupported actor worker type: {type(self.actor_wg)}")
 
@@ -177,19 +177,24 @@ class LLMAgentProxy:
 					mode = "multiturn-middle"
 			else:
 				mode = "singleturn"
-			lm_outputs: DataProto = self.generate_sequences(lm_inputs, mode=mode)
+			lm_inputs.meta_info["mode"] = mode
+			lm_outputs: DataProto = self.generate_sequences(lm_inputs)
 			if mode == "multiturn-end":
 				finalized = True
 			env_inputs: List[Dict] = ctx_manager.get_env_inputs(lm_outputs)
 			env_outputs: List[Dict] = es_manager.step(env_inputs)
 			if len(env_outputs) == 0: # all finished
 				if multi_turn and not finalized and last_inputs is not None:
-					self.generate_sequences(last_inputs, mode="multiturn-end", skip_generation=True)
+					last_inputs.meta_info["skip_generation"] = True
+					last_inputs.meta_info["mode"] = "multiturn-end"
+					self.generate_sequences(last_inputs)
 					finalized = True
 				break
 
 		if multi_turn and not finalized and last_inputs is not None:
-			self.generate_sequences(last_inputs, mode="multiturn-end", skip_generation=True)
+			last_inputs.meta_info["skip_generation"] = True
+			last_inputs.meta_info["mode"] = "multiturn-end"
+			self.generate_sequences(last_inputs)
 		rollout_states = es_manager.get_rollout_states() 
 		rollouts = ctx_manager.formulate_rollouts(rollout_states)
 		# self.tokenizer.batch_decode(rollouts.batch['input_ids'], skip_special_tokens=False) # see all the trajectories

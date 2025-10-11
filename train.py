@@ -135,8 +135,6 @@ def add_dependency_and_validate_config(config):
         "response mask is currently only supported for qwen models"
     assert len(str(config.system.CUDA_VISIBLE_DEVICES).split(',')) == config.trainer.n_gpus_per_node, \
         f"CUDA_VISIBLE_DEVICES ({config.system.CUDA_VISIBLE_DEVICES}) must have the same number of GPUs as n_gpus_per_node ({config.trainer.n_gpus_per_node})"
-    # assert (config.actor_rollout_ref.rollout.tensor_model_parallel_size == config.trainer.n_gpus_per_node) or (not config.actor_rollout_ref.rollout.tp_size_check), \
-    #     f"actor_rollout_ref.rollout.tensor_model_parallel_size ({config.actor_rollout_ref.rollout.tensor_model_parallel_size}) is recommended to be the same as n_gpus_per_node ({config.trainer.n_gpus_per_node}) to maximize rollout speed. You can set actor_rollout_ref.rollout.tp_size_check=False to disable this check."
     assert config.es_manager.train.env_groups * config.es_manager.train.group_size * config.actor_rollout_ref.rollout.rollout_filter_ratio >= config.ppo_mini_batch_size, \
         f"env_groups * group_size * rollout_filter_ratio ({config.es_manager.train.env_groups * config.es_manager.train.group_size * config.actor_rollout_ref.rollout.rollout_filter_ratio}) must be greater than or equal to ppo_mini_batch_size ({config.ppo_mini_batch_size}). Note that effective rollouts for update is env_groups * group_size * rollout_filter_ratio."
     assert config.algorithm.bi_level_gae == False or config.algorithm.adv_estimator == "gae", "BI_LEVEL_GAE is enabled, so config.algorithm.adv_estimator should be set to gae"

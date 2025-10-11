@@ -60,7 +60,6 @@ actor_rollout_ref:
     val_kwargs:
       do_sample: True
       temperature: 0.5
-    tp_size_check: true
 
 critic:
   ppo_mini_batch_size: ${ppo_mini_batch_size} # by default, ppo_mini_batch_size = train_batch_size / 4

@@ -9,7 +9,7 @@ seed:
   train: 10000
   val: 123
 
-micro_batch_size_per_gpu: 8
+micro_batch_size_per_gpu: 4
 ppo_mini_batch_size: 32
 model_path: Qwen/Qwen2.5-3B-Instruct
 enable_response_mask: True # Enabling response mask could improve stability of rollout/old_log_prob, as P(st|history) are no longer calculated in loss here. See https://docs.google.com/document/d/1bg7obeiKTExuHHBl5uOiSpec5uLDZ2Tgvxy6li5pHX4/edit?usp=sharing for more details.
@@ -39,6 +39,7 @@ actor_rollout_ref:
     grpo_advantage_length_weight: ${grpo_advantage_length_weight}
     optim:
       betas: [0.9, 0.999]
+      lr: 1e-5
   ref:
     log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
   rollout:
@@ -48,19 +49,16 @@ actor_rollout_ref:
     max_model_len: 3600
     prompt_length: 1 # useless. Just put it here
     response_length: 400 # single-turn response length
-    gpu_memory_utilization: 0.7
+    gpu_memory_utilization: 0.5
     max_num_batched_tokens: 8192 # set only when enable_chunked_prefill is true
     temperature: 1
-    rollout_filter_ratio: 1
-    # disable_log_stats: False
-    # log_stats_interval: 2
+    rollout_filter_ratio: 0.25
     rollout_filter_type: std # max_mean or std
     enforce_eager: True #  for small models, set both enforce_eager and free_cache_engine to False to make rollout faster
     free_cache_engine: True
     val_kwargs:
       do_sample: True
       temperature: 0.5
-    tp_size_check: true
 
 critic:
   ppo_mini_batch_size: ${ppo_mini_batch_size} # by default, ppo_mini_batch_size = train_batch_size / 4
@@ -72,6 +70,7 @@ critic:
     target_modules: ${lora.target_modules}
   optim:
     betas: [0.9, 0.999]
+    lr: 1e-4
 
 data:
   max_prompt_length: null
@@ -107,7 +106,7 @@ agent_proxy:
   max_context_window: -1 # set a value > 0 to enable context window for long trajectory
   max_turn: 5
   action_sep: "||"
-  max_actions_per_turn: 5 # how many actions can be output at most in a single turn
+  max_actions_per_turn: 2 # how many actions can be output at most in a single turn
   use_turn_scores: False # important to GAE when applying token-level rewards to token-level advantages. If False, will take the sum of scores as the reward for the last turn.
   enable_think: True # False -> no think RL
   reward_normalization:

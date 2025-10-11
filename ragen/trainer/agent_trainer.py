@@ -182,6 +182,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             actor_rollout_wg=self.actor_rollout_wg,
             tokenizer=self.tokenizer
         )
+
     def _maybe_log_generations(self, inputs, outputs, scores, _type="val"):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
 
@@ -540,9 +541,11 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 # batch = batch.union(gen_batch_output)
 
                 # NOTE reward normalization already done in ctx_manager, so set group size = 1 here
-                batch.non_tensor_batch["uid"] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
-                                                            dtype=object)
-                # batch.non_tensor_batch["uid"] = batch.non_tensor_batch["group_ids"]
+                # batch.non_tensor_batch["uid"] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
+                                                            # dtype=object)
+                
+                # NOTE: do not do reward normalization in ctx_manager, so we need to do it here
+                batch.non_tensor_batch["uid"] = batch.non_tensor_batch["group_ids"]
 
                 # batch.batch["response_mask"] = compute_response_mask(batch)
                 batch.batch["response_mask"] = batch.batch["loss_mask"]
@@ -567,15 +570,27 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                     reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
 
                 # recompute old_log_probs
-                with marked_timer("old_log_prob", timing_raw):
+
+                with marked_timer("old_log_prob", timing_raw, color="blue"):
                     old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                    entropys = old_log_prob.batch["entropys"]
+                    response_masks = batch.batch["response_mask"]
+                    loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
+                    entropy_agg = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
+                    old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
+                    metrics.update(old_log_prob_metrics)
+                    old_log_prob.batch.pop("entropys")
                     batch = batch.union(old_log_prob)
-                    avg_old_log_prob = masked_mean(old_log_prob.batch["old_log_probs"], batch.batch["response_mask"])
-                    metrics.update({"rollout/old_log_prob": avg_old_log_prob})
+
+                    if "rollout_log_probs" in batch.batch.keys():
+                        # TODO: we may want to add diff of probs too.
+                        from verl.utils.debug.metrics import calculate_debug_metrics
+
+                        metrics.update(calculate_debug_metrics(batch))
 
                 if self.use_reference_policy:
                     # compute reference log_prob
-                    with marked_timer("ref", timing_raw):
+                    with marked_timer("ref", timing_raw, color="olive"):
                         if not self.ref_in_actor:
                             ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
                         else:
@@ -634,7 +649,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
                 # update critic
                 if self.use_critic:
-                    with marked_timer("update_critic", timing_raw):
+                    with marked_timer("update_critic", timing_raw, color="pink"):
                         critic_output = self.critic_wg.update_critic(batch)
                     critic_output_metrics = reduce_metrics(critic_output.meta_info["metrics"])
                     metrics.update(critic_output_metrics)
