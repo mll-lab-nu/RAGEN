@@ -4,9 +4,69 @@ import numpy as np
 import marshal
 import copy
 from collections import deque
+from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+
+
+CoordDict = Dict[str, List[Tuple[int, int]]]
+
+
+def _to_tuple_list(array: np.ndarray, index_origin: int = 0) -> List[Tuple[int, int]]:
+    if array.size == 0:
+        return []
+    return [(int(r) + index_origin, int(c) + index_origin) for r, c in array]
+
+
+def collect_entity_coordinates(room_state: np.ndarray, room_fixed: np.ndarray, index_origin: int = 0) -> CoordDict:
+    """Collect coordinates for key Sokoban entities using the given origin."""
+
+    coords: CoordDict = {
+        "walls": _to_tuple_list(np.argwhere(room_fixed == 0), index_origin),
+        "targets": _to_tuple_list(np.argwhere(room_fixed == 2), index_origin),
+        "boxes_on_target": _to_tuple_list(np.argwhere(room_state == 3), index_origin),
+        "boxes": _to_tuple_list(np.argwhere(room_state == 4), index_origin),
+    }
+
+    player_positions = np.argwhere(room_state == 5)
+    player_on_target = []
+    player_regular = []
+    for pos in player_positions:
+        r, c = int(pos[0]), int(pos[1])
+        if room_fixed[r, c] == 2:
+            player_on_target.append((r + index_origin, c + index_origin))
+        else:
+            player_regular.append((r + index_origin, c + index_origin))
+
+    coords["player"] = player_regular
+    coords["player_on_target"] = player_on_target
+    return coords
+
+
+def format_coordinate_render(entity_coords: CoordDict, board_shape: Tuple[int, int], index_origin: int = 0) -> str:
+    """Format Sokoban entities as a coordinate-based description."""
+
+    rows, cols = board_shape
+    origin_str = "zero-indexed" if index_origin == 0 else f"origin at {index_origin}"
+    lines = [f"Board size: {rows} rows x {cols} cols ({origin_str})."]
+    ordered_labels = [
+        ("walls", "Walls"),
+        ("targets", "Targets"),
+        ("boxes", "Boxes"),
+        ("boxes_on_target", "Boxes on target"),
+        ("player", "Player"),
+        ("player_on_target", "Player on target"),
+    ]
+
+    for key, label in ordered_labels:
+        coords = entity_coords.get(key, [])
+        if not coords:
+            continue
+        coord_str = ", ".join(f"({r}, {c})" for r, c in coords)
+        lines.append(f"{label}: {coord_str}")
+
+    return "\n".join(lines)
 
 def get_shortest_action_path(room_fixed, room_state, MAX_DEPTH=100):
         """

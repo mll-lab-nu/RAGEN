@@ -13,9 +13,12 @@ class SokobanEnvConfig:
     dim_x: Optional[int] = None
     dim_y: Optional[int] = None
     render_mode: str = "text"
+    observation_format: str = "grid"
 
     def __post_init__(self):
         if self.dim_x is not None and self.dim_y is not None:
             self.dim_room = (self.dim_x, self.dim_y)
             delattr(self, 'dim_x')
-            delattr(self, 'dim_y')        
+            delattr(self, 'dim_y')
+        if self.observation_format not in {"grid", "coord", "grid_coord"}:
+            raise ValueError(f"Unsupported observation_format: {self.observation_format}")

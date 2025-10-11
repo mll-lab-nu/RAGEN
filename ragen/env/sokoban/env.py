@@ -1,7 +1,11 @@
 import gym
 from gym_sokoban.envs.sokoban_env import SokobanEnv as GymSokobanEnv
 import numpy as np
-from .utils import generate_room
+from .utils import (
+    generate_room,
+    collect_entity_coordinates,
+    format_coordinate_render,
+)
 # from gym_sokoban.envs.sokoban_env.utils import generate_room
 from ragen.env.base import BaseDiscreteActionEnv
 from ragen.env.sokoban.config import SokobanEnvConfig
@@ -15,6 +19,7 @@ class SokobanEnv(BaseDiscreteActionEnv, GymSokobanEnv):
         self.search_depth = self.config.search_depth
         self.ACTION_SPACE = gym.spaces.discrete.Discrete(4, start=1)
         self.render_mode = self.config.render_mode
+        self.observation_format = self.config.observation_format
 
         BaseDiscreteActionEnv.__init__(self)
         GymSokobanEnv.__init__(
@@ -47,18 +52,32 @@ class SokobanEnv(BaseDiscreteActionEnv, GymSokobanEnv):
         next_obs = self.render()
         action_effective = not np.array_equal(previous_pos, self.player_position)
         info = {"action_is_effective": action_effective, "action_is_valid": True, "success": self.boxes_on_target == self.num_boxes}
-            
+        if self.observation_format == 'grid_coord':
+            next_obs = self._render_text('grid_coord')
         return next_obs, reward, done, info
 
     def render(self, mode=None):
+        if mode in {'grid', 'coord', 'grid_coord'}:
+            return self._render_text(mode)
+
         render_mode = mode if mode is not None else self.render_mode
         if render_mode == 'text':
+            return self._render_text(self.observation_format)
+        if render_mode == 'rgb_array':
+            return self.get_image(mode='rgb_array', scale=1)
+        raise ValueError(f"Invalid mode: {render_mode}")
+
+    def _render_text(self, observation_format: str) -> str:
+        if observation_format == 'grid':
             room = np.where((self.room_state == 5) & (self.room_fixed == 2), 6, self.room_state)
             return '\n'.join(''.join(self.GRID_LOOKUP.get(cell, "?") for cell in row) for row in room.tolist())
-        elif render_mode == 'rgb_array':
-            return self.get_image(mode='rgb_array', scale=1)
-        else:
-            raise ValueError(f"Invalid mode: {render_mode}")
+        if observation_format == 'coord':
+            entity_coords = collect_entity_coordinates(self.room_state, self.room_fixed)
+            return format_coordinate_render(entity_coords, self.dim_room)
+        if observation_format == 'grid_coord':
+            entity_coords = collect_entity_coordinates(self.room_state, self.room_fixed)
+            return "Coordinates: \n" + format_coordinate_render(entity_coords, self.dim_room) + "\n" + "Grid Map: \n" + self._render_text('grid')
+        raise ValueError(f"Invalid observation_format: {observation_format}")
     
     def get_all_actions(self):
         return list([k for k in self.ACTION_LOOKUP.keys()])

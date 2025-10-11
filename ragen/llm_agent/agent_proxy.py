@@ -18,8 +18,8 @@ class VllmWrapperWg: # Thi is a developing class for eval and test
 		self.tokenizer = tokenizer
 		model_name = config.actor_rollout_ref.model.path
 		ro_config = config.actor_rollout_ref.rollout
-		self.llm = LLM(
-			model_name,
+		log_stats_interval = getattr(ro_config, "log_stats_interval", None)
+		llm_kwargs = dict(
             enable_sleep_mode=True,
             tensor_parallel_size=ro_config.tensor_model_parallel_size,
             dtype=ro_config.dtype,
@@ -34,6 +34,12 @@ class VllmWrapperWg: # Thi is a developing class for eval and test
             enable_chunked_prefill=ro_config.enable_chunked_prefill,
             enable_prefix_caching=True,
 			trust_remote_code=True,
+        )
+		if log_stats_interval is not None:
+			llm_kwargs["log_stats_interval"] = log_stats_interval
+		self.llm = LLM(
+			model_name,
+			**llm_kwargs,
 		)
 		print("LLM initialized")
 		self.sampling_params = SamplingParams(

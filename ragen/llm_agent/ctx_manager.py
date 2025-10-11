@@ -118,9 +118,17 @@ class ContextManager:
             for k,v in env_config.items():
                 env_config_new[k] = v
             env_instruction = env_config_new.get("env_instruction", "")
-            if env_config_new.get("grid_vocab", False):
+            observation_format = env_config_new.get("observation_format", "grid")
+            if observation_format == "grid" and env_config_new.get("grid_vocab", False):
                 grid_vocab_str = "\nThe meaning of each symbol in the state is:\n" + ", ".join([f"{k}: {v}" for k, v in env_config_new["grid_vocab"].items()])
                 env_instruction += grid_vocab_str
+            if observation_format == "coord":
+                coord_hint = (
+                    "\nStates are provided as coordinate lists using zero-based indexing "
+                    "with the format (row, col) for each entity type: Walls, Targets, Boxes, "
+                    "Boxes on target, Player, and Player on target when applicable."
+                )
+                env_instruction += coord_hint
             if env_config_new.get("action_lookup", False):
                 action_lookup_str = "\nYour available actions are:\n" + ", ".join([f"{v}" for k, v in env_config_new["action_lookup"].items()])
                 action_lookup_str += f"\nYou can make up to {env_config_new['max_actions_per_traj']} actions, separated by the action separator \" " + self.action_sep + " \"\n"

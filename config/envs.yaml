@@ -36,6 +36,18 @@ custom_envs:
       grid_lookup: {0: "W", 1: ".", 2: "G", 3: "C", 4: "B", 5: "A", 6: "@"}
       grid_vocab: {"W": "wall", ".": "empty", "G": "target", "C": "box on target", "B": "box", "A": "player", "@": "player on target"}
 
+  CoordSokoban:
+    env_type: sokoban
+    max_actions_per_traj: 10
+    env_instruction: "You are solving the Sokoban puzzle. States are described with coordinates in the form (row, col). Push every box onto a target by issuing actions like <answer>Right || Right || Up</answer>."
+    max_tokens: 120
+    env_config: # keys should be a subset of SokobanConfig
+      dim_x: 6
+      dim_y: 6
+      num_boxes: 1
+      max_steps: 100
+      observation_format: "grid_coord"
+
   VisualSimpleSokoban:
     env_type: sokoban
     max_actions_per_traj: 10
