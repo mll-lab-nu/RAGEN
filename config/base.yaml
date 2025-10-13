@@ -53,7 +53,8 @@ actor_rollout_ref:
     max_num_batched_tokens: 8192 # set only when enable_chunked_prefill is true
     temperature: 1
     rollout_filter_ratio: 0.25
-    rollout_filter_type: std # max_mean or std
+    rollout_filter_type: largest # smallest or largest
+    rollout_filter_metric: reward_variance
     enforce_eager: True #  for small models, set both enforce_eager and free_cache_engine to False to make rollout faster
     free_cache_engine: True
     val_kwargs:
