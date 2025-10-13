@@ -52,8 +52,6 @@ class SokobanEnv(BaseDiscreteActionEnv, GymSokobanEnv):
         next_obs = self.render()
         action_effective = not np.array_equal(previous_pos, self.player_position)
         info = {"action_is_effective": action_effective, "action_is_valid": True, "success": self.boxes_on_target == self.num_boxes}
-        if self.observation_format == 'grid_coord':
-            next_obs = self._render_text('grid_coord')
         return next_obs, reward, done, info
 
     def render(self, mode=None):
