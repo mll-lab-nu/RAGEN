@@ -3,45 +3,46 @@ FSDP PPO Trainer with Ray-based single controller.
 Adapted from the excellently written verl implementation.
 """
 
-import json
 import os
 import uuid
-from collections import defaultdict
-from copy import deepcopy
-from pprint import pprint
-from typing import Dict, Optional, Type
-
-import numpy as np
 import ray
 import torch
+import numpy as np
+from collections import defaultdict
 from omegaconf import OmegaConf, open_dict
+from torch.utils.data import Dataset, Sampler
+from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
+from pprint import pprint
+from copy import deepcopy
 
 from verl import DataProto
+from verl.experimental.dataset.sampler import AbstractCurriculumSampler
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
-from verl.single_controller.base import Worker
 from verl.single_controller.ray import RayClassWithInitArgs, RayResourcePool, RayWorkerGroup
 from verl.single_controller.ray.base import create_colocated_worker_cls
-from ragen.trainer import core_algos
-from ragen.trainer.core_algos import agg_loss
+from verl.trainer.config import AlgoConfig
+from verl.trainer.ppo import core_algos
+from verl.trainer.ppo.core_algos import AdvantageEstimator, agg_loss
 from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
     compute_throughout_metrics,
     compute_timing_metrics,
     process_validation_metrics,
-    reduce_metrics,
 )
 from verl.trainer.ppo.reward import compute_reward, compute_reward_async
-from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path
+from verl.trainer.ppo.utils import Role, WorkerType, need_critic, need_reference_policy, need_reward_model
+from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path, should_save_ckpt_esi
+from verl.utils.config import omega_conf_to_dataclass
+from verl.utils.debug import marked_timer
+from verl.utils.metric import reduce_metrics
+from verl.utils.rollout_skip import RolloutSkip
 from verl.utils.seqlen_balancing import get_seqlen_balanced_partitions, log_seqlen_unbalance
 from verl.utils.torch_functional import masked_mean
 from verl.utils.tracking import ValidationGenerationsLogger
-from verl.workers.rollout.async_server import AsyncLLMServerManager
-
-WorkerType = Type[Worker]
 
 
-from verl.trainer.ppo.ray_trainer import Role, ResourcePoolManager, compute_response_mask, _timer, apply_kl_penalty, AdvantageEstimator
+from verl.trainer.ppo.ray_trainer import Role, ResourcePoolManager, compute_response_mask, apply_kl_penalty, AdvantageEstimator
 from verl.trainer.ppo.ray_trainer import RayPPOTrainer as VerlRayPPOTrainer
 
 import torch
@@ -50,6 +51,7 @@ from verl.utils.torch_functional import masked_mean
 from ragen.llm_agent.agent_proxy import LLMAgentProxy
 from ragen.utils import GenerationsLogger
 from ragen.trainer.rollout_filter import build_rollout_filter
+
 
 
 def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1, multi_turn=False, norm_adv_by_std_in_grpo=True, bi_level_gae=False, high_level_gamma=1.0):
@@ -213,98 +215,54 @@ class RayAgentTrainer(VerlRayPPOTrainer):
         # Lists to collect samples for the table
         sample_inputs = []
         sample_outputs = []
-        sample_gts = []
         sample_scores = []
-        sample_turns = []
-        sample_uids = []
 
-        for test_data in self.val_dataloader:
-            test_batch = DataProto.from_single_dict(test_data)
-
-            if "uid" not in test_batch.non_tensor_batch:
-                test_batch.non_tensor_batch["uid"] = np.array(
-                    [str(uuid.uuid4()) for _ in range(len(test_batch.batch))], dtype=object
-                )
-
-            # repeat test batch
-            test_batch = test_batch.repeat(
-                repeat_times=self.config.actor_rollout_ref.rollout.val_kwargs.n, interleave=True
-            )
-
-            # we only do validation on rule-based rm
-            if self.config.reward_model.enable and test_batch[0].non_tensor_batch["reward_model"]["style"] == "model":
-                return {}
-
+        env_metric_dict = {}
+        for step in range(self.config.trainer.validation_steps):
             # Store original inputs
-            input_ids = test_batch.batch["input_ids"]
-            # TODO: Can we keep special tokens except for padding tokens?
-            input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
+            input_texts = ["" for _ in range(self.config.es_manager.val.env_groups * self.config.es_manager.val.group_size)]
             sample_inputs.extend(input_texts)
-            sample_uids.extend(test_batch.non_tensor_batch["uid"])
-
-            ground_truths = [
-                item.non_tensor_batch.get("reward_model", {}).get("ground_truth", None) for item in test_batch
-            ]
-            sample_gts.extend(ground_truths)
-
-            test_gen_batch = self._get_gen_batch(test_batch)
-            test_gen_batch.meta_info = {
+            
+            meta_info = {
                 "eos_token_id": self.tokenizer.eos_token_id,
                 "pad_token_id": self.tokenizer.pad_token_id,
                 "recompute_log_prob": False,
                 "do_sample": self.config.actor_rollout_ref.rollout.val_kwargs.do_sample,
                 "validate": True,
-                "global_steps": self.global_steps,
             }
+            test_gen_batch = DataProto(batch=None, non_tensor_batch=None, meta_info=meta_info)
             print(f"test_gen_batch meta info: {test_gen_batch.meta_info}")
 
             # pad to be divisible by dp_size
-            size_divisor = (
-                self.actor_rollout_wg.world_size
-                if not self.async_rollout_mode
-                else self.config.actor_rollout_ref.rollout.agent.num_workers
-            )
-            test_gen_batch_padded, pad_size = pad_dataproto_to_divisor(test_gen_batch, size_divisor)
-            if not self.async_rollout_mode:
-                test_output_gen_batch_padded = self.actor_rollout_wg.generate_sequences(test_gen_batch_padded)
-            else:
-                test_output_gen_batch_padded = self.async_rollout_manager.generate_sequences(test_gen_batch_padded)
-
-            # unpad
-            test_output_gen_batch = unpad_dataproto(test_output_gen_batch_padded, pad_size=pad_size)
-
-            print("validation generation end")
+            import time
+            start_time = time.time()
+            test_batch = self.agent_proxy.rollout(test_gen_batch, val=True)
+            end_time = time.time()
+            print(f"validation generation time: {end_time - start_time} seconds")
+            for key, value in test_batch.meta_info["metrics"].items():
+                if "val-env/" + key not in env_metric_dict:
+                    env_metric_dict["val-env/" + key] = []
+                env_metric_dict["val-env/" + key].append(value)
 
             # Store generated outputs
-            output_ids = test_output_gen_batch.batch["responses"]
+            output_ids = test_batch.batch["responses"]
             output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids]
             sample_outputs.extend(output_texts)
 
-            test_batch = test_batch.union(test_output_gen_batch)
-            test_batch.meta_info["validate"] = True
-
             # evaluate using reward_function
-            if self.val_reward_fn is None:
-                raise ValueError("val_reward_fn must be provided for validation.")
             result = self.val_reward_fn(test_batch, return_dict=True)
             reward_tensor = result["reward_tensor"]
             scores = reward_tensor.sum(-1).cpu().tolist()
             sample_scores.extend(scores)
 
             reward_extra_infos_dict["reward"].extend(scores)
-            print(f"len reward_extra_infos_dict['reward']: {len(reward_extra_infos_dict['reward'])}")
             if "reward_extra_info" in result:
                 for key, lst in result["reward_extra_info"].items():
                     reward_extra_infos_dict[key].extend(lst)
-                    print(f"len reward_extra_infos_dict['{key}']: {len(reward_extra_infos_dict[key])}")
-
-            # collect num_turns of each prompt
-            if "__num_turns__" in test_batch.non_tensor_batch:
-                sample_turns.append(test_batch.non_tensor_batch["__num_turns__"])
 
             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
 
-        self._maybe_log_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
+        self._maybe_log_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores, _type="val")
 
         # dump generations
         val_data_dir = self.config.trainer.get("validation_data_dir", None)
@@ -312,7 +270,6 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             self._dump_generations(
                 inputs=sample_inputs,
                 outputs=sample_outputs,
-                gts=sample_gts,
                 scores=sample_scores,
                 reward_extra_infos_dict=reward_extra_infos_dict,
                 dump_path=val_data_dir,
@@ -323,29 +280,20 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
         data_sources = np.concatenate(data_source_lst, axis=0)
 
-        data_src2var2metric2val = process_validation_metrics(data_sources, sample_uids, reward_extra_infos_dict)
-        metric_dict = {}
+        data_src2var2metric2val = process_validation_metrics(data_sources, sample_inputs, reward_extra_infos_dict)
+        metric_dict = reduce_metrics(env_metric_dict)
+
         for data_source, var2metric2val in data_src2var2metric2val.items():
             core_var = "acc" if "acc" in var2metric2val else "reward"
             for var_name, metric2val in var2metric2val.items():
                 n_max = max([int(name.split("@")[-1].split("/")[0]) for name in metric2val.keys()])
                 for metric_name, metric_val in metric2val.items():
-                    if (
-                        (var_name == core_var)
-                        and any(metric_name.startswith(pfx) for pfx in ["mean", "maj", "best"])
-                        and (f"@{n_max}" in metric_name)
-                    ):
+                    if (var_name == core_var) and any(metric_name.startswith(pfx) for pfx in ["mean", "maj", "best"]) and (f"@{n_max}" in metric_name):
                         metric_sec = "val-core"
                     else:
                         metric_sec = "val-aux"
                     pfx = f"{metric_sec}/{data_source}/{var_name}/{metric_name}"
                     metric_dict[pfx] = metric_val
-
-        if len(sample_turns) > 0:
-            sample_turns = np.concatenate(sample_turns)
-            metric_dict["val-aux/num_turns/min"] = sample_turns.min()
-            metric_dict["val-aux/num_turns/max"] = sample_turns.max()
-            metric_dict["val-aux/num_turns/mean"] = sample_turns.mean()
 
         return metric_dict
 
@@ -520,6 +468,47 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             scores = batch.batch["rm_scores"].sum(-1).cpu().tolist()
             return inputs, outputs, scores
 
+        def _filter_rollout(batch):
+            """filter rollout based on in-group max - in-group mean. We want those groups to have high-quality rollouts that deviates significantly from the mean"""
+            rollout_filter_ratio = self.config.actor_rollout_ref.rollout.rollout_filter_ratio
+            num_groups, group_size = self.config.es_manager.train.env_groups, self.config.es_manager.train.group_size
+
+            rm_scores = batch.batch["original_rm_scores"].sum(dim=-1).view(num_groups, group_size)
+            in_group_std = rm_scores.std(dim=-1)
+            in_group_max = rm_scores.max(dim=-1).values
+            in_group_mean = rm_scores.mean(dim=-1)
+            if rollout_filter_ratio == 1:
+                return batch, {"rollout/in_group_std": in_group_std.mean(), "rollout/in_group_max": in_group_max.mean(), "rollout/in_group_mean": in_group_mean.mean(), "rollout/chosen_in_group_std": in_group_std.mean(), "rollout/chosen_in_group_max": in_group_max.mean(), "rollout/chosen_in_group_mean": in_group_mean.mean()}
+
+            if self.config.actor_rollout_ref.rollout.rollout_filter_type == "std_rev":
+                top_groups = (-in_group_std).topk(int(rollout_filter_ratio * num_groups)).indices
+            elif self.config.actor_rollout_ref.rollout.rollout_filter_type == "std":
+                top_groups = in_group_std.topk(int(rollout_filter_ratio * num_groups)).indices
+            else:
+                raise ValueError(f"Invalid rollout filter type: {self.config.actor_rollout_ref.rollout.rollout_filter_type}")
+
+            mask = torch.zeros(num_groups, dtype=torch.bool)
+            mask[top_groups] = True
+            mask = mask.unsqueeze(1).expand(-1, group_size).flatten()
+
+            batch.batch = batch.batch[mask]
+
+            for key, value in batch.non_tensor_batch.items():
+                if isinstance(value, np.ndarray):
+                    batch.non_tensor_batch[key] = value[mask]
+                else:
+                    batch.non_tensor_batch[key] = [v for v, m in zip(value, mask) if m]
+
+            metrics = {
+                "rollout/in_group_std": in_group_std.mean(),
+                "rollout/in_group_max": in_group_max.mean(),
+                "rollout/in_group_mean": in_group_mean.mean(),
+                "rollout/chosen_in_group_std": in_group_std[top_groups].mean(),
+                "rollout/chosen_in_group_max": in_group_max[top_groups].mean(),
+                "rollout/chosen_in_group_mean": in_group_mean[top_groups].mean()
+            }
+            return batch, metrics
+
         import time
         self.start_time = time.time()
         for step in range(self.total_training_steps):
@@ -529,26 +518,21 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             batch: DataProto = DataProto()
             is_last_step = self.global_steps >= self.total_training_steps
 
-            with _timer("step", timing_raw):
+            with marked_timer("step", timing_raw):
                 # generate a batch
-                with _timer("gen", timing_raw):
+                with marked_timer("gen", timing_raw):
                     batch = self.agent_proxy.rollout(batch, val=False)
                     batch, metrics = self.rollout_filter.filter(batch)
-                    breakpoint()
                     metrics.update({"train/" + key: value for key, value in batch.meta_info["metrics"].items()})
 
                     inputs, outputs, scores = _process_batch_for_logging(batch)
                     # self._maybe_log_generations(inputs=inputs, outputs=outputs, scores=scores, _type="train")
 
-
-
-
-
                 if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                     # TODO: check if this is correct. Not tested yer
                     logger.log("[NotImplemented] REMAX implementation is not tested yet in RAGEN. Exiting.")
                     exit()
-                    with _timer("gen_max", timing_raw):
+                    with marked_timer("gen_max", timing_raw):
                         gen_baseline_batch = deepcopy(batch)
                         gen_baseline_batch.meta_info["do_sample"] = False
                         gen_baseline_output = self.agent_proxy.rollout(gen_baseline_batch, val=False)
@@ -570,13 +554,14 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 # batch = batch.union(gen_batch_output)
 
                 # NOTE reward normalization already done in ctx_manager, so set group size = 1 here
-                batch.non_tensor_batch["uid"] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
-                                                            dtype=object)
-                # batch.non_tensor_batch["uid"] = batch.non_tensor_batch["group_ids"]
+                # batch.non_tensor_batch["uid"] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
+                                                            # dtype=object)
+                
+                # NOTE: do not do reward normalization in ctx_manager, so we need to do it here
+                batch.non_tensor_batch["uid"] = batch.non_tensor_batch["group_ids"]
 
                 # batch.batch["response_mask"] = compute_response_mask(batch)
                 batch.batch["response_mask"] = batch.batch["loss_mask"]
-                breakpoint()
                 # balance the number of valid tokens on each dp rank.
                 # Note that this breaks the order of data inside the batch.
                 # Please take care when you implement group based adv computation such as GRPO and rloo
@@ -587,7 +572,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
 
                 if self.use_rm:
-                    with _timer("reward", timing_raw):
+                    with marked_timer("reward", timing_raw):
                     # compute reward model score
                         reward_tensor = self.rm_wg.compute_rm_score(batch)
                         batch = batch.union(reward_tensor)
@@ -598,17 +583,27 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                     reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
 
                 # recompute old_log_probs
-                with _timer("old_log_prob", timing_raw):
-                    if "old_log_probs" not in batch.batch:
-                        old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
-                        batch = batch.union(old_log_prob)
-                    old_log_prob_tensor = batch.batch["old_log_probs"]
-                    avg_old_log_prob = masked_mean(old_log_prob_tensor, batch.batch["response_mask"])
-                    metrics.update({"rollout/old_log_prob": avg_old_log_prob})
+
+                with marked_timer("old_log_prob", timing_raw, color="blue"):
+                    old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                    entropys = old_log_prob.batch["entropys"]
+                    response_masks = batch.batch["response_mask"]
+                    loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
+                    entropy_agg = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
+                    old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
+                    metrics.update(old_log_prob_metrics)
+                    old_log_prob.batch.pop("entropys")
+                    batch = batch.union(old_log_prob)
+
+                    if "rollout_log_probs" in batch.batch.keys():
+                        # TODO: we may want to add diff of probs too.
+                        from verl.utils.debug.metrics import calculate_debug_metrics
+
+                        metrics.update(calculate_debug_metrics(batch))
 
                 if self.use_reference_policy:
                     # compute reference log_prob
-                    with _timer("ref", timing_raw):
+                    with marked_timer("ref", timing_raw, color="olive"):
                         if not self.ref_in_actor:
                             ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
                         else:
@@ -619,11 +614,11 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
                 # compute values
                 if self.use_critic:
-                    with _timer("values", timing_raw):
+                    with marked_timer("values", timing_raw):
                         values = self.critic_wg.compute_values(batch)
                         batch = batch.union(values)
 
-                with _timer("adv", timing_raw):
+                with marked_timer("adv", timing_raw):
                     # we combine with rule-based rm
                     reward_extra_infos_dict: dict[str, list]
                     if self.config.reward_model.launch_reward_fn_async:
@@ -667,7 +662,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
                 # update critic
                 if self.use_critic:
-                    with _timer("update_critic", timing_raw):
+                    with marked_timer("update_critic", timing_raw, color="pink"):
                         critic_output = self.critic_wg.update_critic(batch)
                     critic_output_metrics = reduce_metrics(critic_output.meta_info["metrics"])
                     metrics.update(critic_output_metrics)
@@ -675,7 +670,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 # implement critic warmup
                 if self.config.trainer.critic_warmup <= self.global_steps:
                     # update actor
-                    with _timer("update_actor", timing_raw):
+                    with marked_timer("update_actor", timing_raw):
                         batch.meta_info["multi_turn"] = True
                         actor_output = self.actor_rollout_wg.update_actor(batch)
                     actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
@@ -684,7 +679,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 # Log rollout generations if enabled
                 rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
                 if rollout_data_dir:
-                    with _timer("dump_rollout_generations", timing_raw):
+                    with marked_timer("dump_rollout_generations", timing_raw):
                         print(batch.batch.keys())
                         inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
                         outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
@@ -699,14 +694,14 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
                 # validate
                 if self.val_reward_fn is not None and self.config.trainer.test_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.test_freq == 0):
-                    with _timer("testing", timing_raw):
+                    with marked_timer("testing", timing_raw):
                         val_metrics: dict = self._validate()
                         if is_last_step:
                             last_val_metrics = val_metrics
                     metrics.update(val_metrics)
 
                 if self.config.trainer.save_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.save_freq == 0):
-                    with _timer("save_checkpoint", timing_raw):
+                    with marked_timer("save_checkpoint", timing_raw):
                         self._save_checkpoint()
 
             # collect metrics
