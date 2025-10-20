@@ -118,6 +118,18 @@ custom_envs:
     max_tokens: 100
     env_config: null
 
+  CoordFrozenLake:
+    env_type: frozen_lake
+    max_actions_per_traj: 10
+    env_instruction: |
+      You are solving the FrozenLake puzzle. The observation includes both a symbol grid and zero-indexed coordinates for the start, goal, player, and any holes.
+      Coordinates range from the top-left corner (0, 0) to the bottom-right corner (5, 5).
+      Beware that the ice is slippery, so the agent might slide and end up in an unintended tile.
+      Respond with a sequence of actions such as <answer>Left || Up || Up</answer>.
+    max_tokens: 120
+    env_config:
+      observation_format: "grid_coord"
+
   MetamathQA:
     env_type: metamathqa
     max_actions_per_traj: 1
