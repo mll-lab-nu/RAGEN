@@ -102,6 +102,8 @@ trainer:
   generations_to_log_to_wandb: 
     val: 20
   logger: [ 'console', 'wandb' ]
+  max_actor_ckpt_to_keep: 1
+  max_critic_ckpt_to_keep: 1
 
 agent_proxy:
   max_context_window: -1 # set a value > 0 to enable context window for long trajectory
