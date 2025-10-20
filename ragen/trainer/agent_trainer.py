@@ -390,47 +390,6 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             scores = batch.batch["rm_scores"].sum(-1).cpu().tolist()
             return inputs, outputs, scores
 
-        def _filter_rollout(batch):
-            """filter rollout based on in-group max - in-group mean. We want those groups to have high-quality rollouts that deviates significantly from the mean"""
-            rollout_filter_ratio = self.config.actor_rollout_ref.rollout.rollout_filter_ratio
-            num_groups, group_size = self.config.es_manager.train.env_groups, self.config.es_manager.train.group_size
-
-            rm_scores = batch.batch["original_rm_scores"].sum(dim=-1).view(num_groups, group_size)
-            in_group_std = rm_scores.std(dim=-1)
-            in_group_max = rm_scores.max(dim=-1).values
-            in_group_mean = rm_scores.mean(dim=-1)
-            if rollout_filter_ratio == 1:
-                return batch, {"rollout/in_group_std": in_group_std.mean(), "rollout/in_group_max": in_group_max.mean(), "rollout/in_group_mean": in_group_mean.mean(), "rollout/chosen_in_group_std": in_group_std.mean(), "rollout/chosen_in_group_max": in_group_max.mean(), "rollout/chosen_in_group_mean": in_group_mean.mean()}
-
-            if self.config.actor_rollout_ref.rollout.rollout_filter_type == "std_rev":
-                top_groups = (-in_group_std).topk(int(rollout_filter_ratio * num_groups)).indices
-            elif self.config.actor_rollout_ref.rollout.rollout_filter_type == "std":
-                top_groups = in_group_std.topk(int(rollout_filter_ratio * num_groups)).indices
-            else:
-                raise ValueError(f"Invalid rollout filter type: {self.config.actor_rollout_ref.rollout.rollout_filter_type}")
-
-            mask = torch.zeros(num_groups, dtype=torch.bool)
-            mask[top_groups] = True
-            mask = mask.unsqueeze(1).expand(-1, group_size).flatten()
-
-            batch.batch = batch.batch[mask]
-
-            for key, value in batch.non_tensor_batch.items():
-                if isinstance(value, np.ndarray):
-                    batch.non_tensor_batch[key] = value[mask]
-                else:
-                    batch.non_tensor_batch[key] = [v for v, m in zip(value, mask) if m]
-
-            metrics = {
-                "rollout/in_group_std": in_group_std.mean(),
-                "rollout/in_group_max": in_group_max.mean(),
-                "rollout/in_group_mean": in_group_mean.mean(),
-                "rollout/chosen_in_group_std": in_group_std[top_groups].mean(),
-                "rollout/chosen_in_group_max": in_group_max[top_groups].mean(),
-                "rollout/chosen_in_group_mean": in_group_mean[top_groups].mean()
-            }
-            return batch, metrics
-
         import time
         self.start_time = time.time()
         for step in range(self.total_training_steps):

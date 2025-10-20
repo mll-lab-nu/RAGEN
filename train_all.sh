@@ -244,3 +244,8 @@ MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name _2_sokoban system.CUDA_V
     trainer.experiment_name=sokoban-3b-grpo $USE_GRPO $USE_BASE \
     es_manager.train.env_groups=2 es_manager.train.group_size=16 es_manager.train.env_configs.n_groups=[2] \
     trainer.nnodes=1 &
+
+
+
+python train.py \
+    trainer.experiment_name=3b-full-ppo-test system.CUDA_VISIBLE_DEVICES=\"0,1\" trainer.n_gpus_per_node=2
