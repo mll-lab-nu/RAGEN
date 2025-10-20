@@ -14,6 +14,7 @@ import numpy as np
 from ragen.utils import register_resolvers
 register_resolvers()
 import sys
+import socket
 
 class DummyRewardManager():
     """The reward manager.
@@ -181,9 +182,15 @@ def run_ppo(config) -> None:
 class TaskRunner:
 
     def run(self, config):
-        from verl.utils.fs import copy_to_local
-        # print initial config
         from pprint import pprint
+
+        from omegaconf import OmegaConf
+
+        from verl.utils.fs import copy_to_local
+
+        print(f"TaskRunner hostname: {socket.gethostname()}, PID: {os.getpid()}")
+        pprint(OmegaConf.to_container(config, resolve=True))
+        OmegaConf.resolve(config)
 
         # download the checkpoint from hdfs
         local_path = copy_to_local(config.actor_rollout_ref.model.path)
@@ -200,22 +207,11 @@ class TaskRunner:
             from verl.single_controller.ray import RayWorkerGroup
             ray_worker_group_cls = RayWorkerGroup
 
-        # elif config.actor_rollout_ref.actor.strategy == 'megatron':
-        #     assert  config.actor_rollout_ref.actor.strategy == config.critic.strategy
-        #     from verl.workers.megatron_workers import ActorRolloutRefWorker, CriticWorker
-        #     from verl.single_controller.ray.megatron import NVMegatronRayWorkerGroup
-        #     ray_worker_group_cls = NVMegatronRayWorkerGroup
-
         else:
             raise NotImplementedError
 
         from verl.trainer.ppo.ray_trainer import ResourcePoolManager, Role
 
-        # role_worker_mapping = {
-        #     Role.ActorRollout: ray.remote(ActorRolloutRefWorker),
-        #     Role.Critic: ray.remote(CriticWorker),
-        #     Role.RefPolicy: ray.remote(ActorRolloutRefWorker)
-        # }
         role_worker_mapping = {
             Role.ActorRollout: ray.remote(ActorRolloutRefWorker),
             Role.Critic: ray.remote(CriticWorker),
