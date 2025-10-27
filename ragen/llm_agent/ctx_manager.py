@@ -4,6 +4,7 @@ author: Kangrui Wang, Zihan Wang
 date: 2025-03-30
 """
 from itertools import zip_longest
+import logging
 
 import torch
 import numpy as np
@@ -245,37 +246,65 @@ class ContextManager:
             if max_k is not None and isinstance(max_k, int) and max_k > 0:
                 env_output['history'] = env_output['history'][-max_k:]
             
-            messages = [
-                {"role": "system", "content": f"You're a helpful assistant. "}, 
-                {"role": "user", "content": self.prefix_lookup[env_output["env_id"]]}
-            ]
+            max_model_len = getattr(self.config.actor_rollout_ref.rollout, "max_model_len", None)
+            history = env_output['history']
+            truncated = False
 
-            for idx, content in enumerate(env_output["history"]):
-                messages[-1]["content"] += f"\nTurn {idx + 1}:\n"
-                if "state" in content:
-                    FORMAT_PROMPT = "<think> [Your thoughts] </think> <answer> [your answer] </answer>" if self.config.agent_proxy.enable_think else "<answer> [your answer] </answer>"
-                    LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_output['env_id']]['max_tokens']} words (tokens)."
-                    messages[-1]["content"] += f"State:\n{content['state']}\nYou have {content['actions_left']} actions left. Always output: {FORMAT_PROMPT} with no extra text. Strictly follow this format. {LENGTH_PROMPT}\n"
-                if "llm_response" in content:
-                    messages.append({"role": "assistant", "content": content["llm_response"]})
-                if "reward" in content and not (prepare_for_update and idx == len(env_output["history"]) - 1):
-                    # when prepare for update, we do not add the reward from the n+1 turn to the trajectory
-                    messages.append({"role": "user", "content": f"Reward:\n{content['reward']}\n"})
-                    
+            while True:
+                messages = [
+                    {"role": "system", "content": "You're a helpful assistant. "}, 
+                    {"role": "user", "content": self.prefix_lookup[env_output["env_id"]]}
+                ]
 
-            # NOTE: this assertion is important for loss mask computation        
-            assert all(msg["role"] == "assistant" for msg in messages[2::2])
+                for idx, content in enumerate(history):
+                    messages[-1]["content"] += f"\nTurn {idx + 1}:\n"
+                    if "state" in content:
+                        FORMAT_PROMPT = "<think> [Your thoughts] </think> <answer> [your answer] </answer>" if self.config.agent_proxy.enable_think else "<answer> [your answer] </answer>"
+                        LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_output['env_id']]['max_tokens']} words (tokens)."
+                        messages[-1]["content"] += f"State:\n{content['state']}\nYou have {content['actions_left']} actions left. Always output: {FORMAT_PROMPT} with no extra text. Strictly follow this format. {LENGTH_PROMPT}\n"
+                    if "llm_response" in content:
+                        messages.append({"role": "assistant", "content": content["llm_response"]})
+                    if "reward" in content and not (prepare_for_update and idx == len(history) - 1):
+                        messages.append({"role": "user", "content": f"Reward:\n{content['reward']}\n"})
 
-            text = self.tokenizer.apply_chat_template(messages, add_generation_prompt=(not prepare_for_update), tokenize=False)
-            if not prepare_for_update:
-                if self.config.agent_proxy.enable_think:
-                    text += "<think>" # force the LLM to think before answering
+
+                # NOTE: this assertion is important for loss mask computation        
+                assert all(msg["role"] == "assistant" for msg in messages[2::2])
+
+                text = self.tokenizer.apply_chat_template(messages, add_generation_prompt=(not prepare_for_update), tokenize=False)
+                if not prepare_for_update:
+                    if self.config.agent_proxy.enable_think:
+                        text_with_prompt = text + "<think>"
+                    else:
+                        text_with_prompt = text + "<answer>"
                 else:
-                    text += "<answer>" # force the LLM to answer
-            llm_input_texts.append(text)
+                    text_with_prompt = text
+
+                if max_model_len is None:
+                    break
+                token_len = len(self.tokenizer(text_with_prompt, add_special_tokens=False)["input_ids"])
+                if token_len <= max_model_len:
+                    break
+                if len(history) <= 1:
+                    logging.error(
+                        "The model in env %s has exceeded max_model_len %d in one turn (%d tokens). Please try to increase max_model_len.",
+                        env_output["env_id"], max_model_len, token_len,
+                    )
+                    break
+                history = history[1:]
+                truncated = True
+
+            if truncated:
+                env_output['history'] = history
+                logging.warning(
+                    "Truncated history for env %s to keep prompt within %d tokens (current %d).",
+                    env_output["env_id"], max_model_len, token_len,
+                )
+
+            llm_input_texts.append(text_with_prompt)
             messages_list.append(messages)
 
-        inputs = self.tokenizer(llm_input_texts, return_tensors="pt", padding=True, padding_side="left", truncation=False) # do not truncate here. Process later at TODO
+        inputs = self.tokenizer(llm_input_texts, return_tensors="pt", padding=True, padding_side="left", truncation=False) # We have truncated previously, truncation in tokenizer may cause issues.
         input_ids, attention_mask = inputs.input_ids, inputs.attention_mask
         position_ids = (attention_mask.cumsum(dim=-1) - 1).clamp(min=0)
         if prepare_for_update:
