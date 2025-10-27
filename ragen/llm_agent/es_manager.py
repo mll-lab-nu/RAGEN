@@ -9,6 +9,7 @@ import PIL.Image
 import hydra
 import random
 import numpy as np
+import logging
 
 from ragen.env import REGISTERED_ENVS, REGISTERED_ENV_CONFIGS
 from ragen.utils import register_resolvers
