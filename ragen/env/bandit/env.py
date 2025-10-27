@@ -1,7 +1,7 @@
 import gymnasium as gym
 import numpy as np
 from ragen.env.base import BaseDiscreteActionEnv
-from .config import BanditEnvConfig
+from .config import BanditEnvConfig, ARM_NAMES
 
 INIT_PROMPT = """You are playing a bandit game. Goal: Maximize your total reward by choosing which arm to pull. 
 Game Rules: 
@@ -11,15 +11,19 @@ Game Rules:
 4. Based on the symbolic meaning of their names, which arm do you think is more likely to give higher rewards on average? Choose between {name_a} and {name_b}, and output like <answer> {name_a} </answer> or <answer> {name_b} </answer>.
 """
 
+
 class BanditEnv(BaseDiscreteActionEnv, gym.Env):
+    class_counter = 0
+
     def __init__(self, config = None):
         BaseDiscreteActionEnv.__init__(self)
         self.config = config if config is not None else BanditEnvConfig()
         self.ACTION_SPACE = gym.spaces.discrete.Discrete(2, start=self.config.action_space_start)
-        self.lo_arm_name = self.config.lo_arm_name
-        self.hi_arm_name = self.config.hi_arm_name
+        self.split = self.config.split
         self.render_cache = None
         self.render_mode = self.config.render_mode
+        self.internal_seed = BanditEnv.class_counter
+        BanditEnv.class_counter += 1
         assert self.render_mode == 'text'
         
     def _randomize_arms(self):
@@ -50,7 +54,12 @@ class BanditEnv(BaseDiscreteActionEnv, gym.Env):
         return self.render_cache
 
     def reset(self, seed=None, mode=None):
-        gym.Env.reset(self, seed=seed)
+        if seed is not None:
+            gym.Env.reset(self, seed=seed + self.internal_seed) # add internal seed to differ random reward generator inside the same group
+        else:
+            gym.Env.reset(self, seed=seed)
+        index = int(self.np_random.random() * len(ARM_NAMES[self.split]))
+        self.lo_arm_name, self.hi_arm_name = ARM_NAMES[self.split][index]
         self._randomize_arms()
         pos1 = self.config.action_space_start
         pos2 = pos1 + 1

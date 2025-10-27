@@ -99,8 +99,7 @@ custom_envs:
     env_instruction: ""
     max_tokens: 100
     env_config: 
-      lo_arm_name: "Teacher"
-      hi_arm_name: "Engineer"
+      split: "train"
 
   BanditTest:
     env_type: bandit
@@ -108,8 +107,7 @@ custom_envs:
     env_instruction: ""
     max_tokens: 100
     env_config: 
-      lo_arm_name: "Librarian"
-      hi_arm_name: "Trader"
+      split: "test"
 
   FrozenLake:
     env_type: frozen_lake
