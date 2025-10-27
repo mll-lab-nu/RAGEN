@@ -204,7 +204,13 @@ class EnvStateManager:
                         continue
                     if k not in custom_metric:
                         custom_metric[k] = []
-                    custom_metric[k].append(float(v))
+                    try:
+                        custom_metric[k].append(float(v))
+                    except (ValueError, TypeError):
+                        logging.warning(
+                            "Skipping non-numeric metric '%s' with value %r for env %s.",
+                            k, v, entry['tag']
+                        )
             for k, v in custom_metric.items():
                 # TODO: Move TURN_LVL_METRICS into the environment
                 if "webshop" not in cache['tag'].lower() or ("webshop" in cache['tag'].lower() and k in TURN_LVL_METRICS):
