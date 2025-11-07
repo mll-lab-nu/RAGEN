@@ -1,0 +1,252 @@
+experiments:
+  - runid: bandit_3b_base_ppo_think_normal_2
+    task: bandit
+    model_size: 3b
+    algo: ppo
+    think: true
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: bandit_3b_base_ppo_nothink_normal_2
+    task: bandit
+    model_size: 3b
+    algo: ppo
+    think: false
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: bandit_3b_base_ppo_think_s_2
+    task: bandit
+    model_size: 3b
+    algo: ppo
+    think: true
+    starpos: true
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: bandit_3b_base_ppo_think_s_klcoef0.001_1
+    task: bandit
+    model_size: 3b
+    algo: ppo
+    think: true
+    starpos: true
+    klcoef: 0.001
+    entropyfilter: false
+
+  - runid: bandit_3b_base_ppo_think_s_entropyfilter_1
+    task: bandit
+    model_size: 3b
+    algo: ppo
+    think: true
+    starpos: true
+    klcoef: 0
+    entropyfilter: true
+
+  - runid: sokoban_coord_3b_base_ppo_think_s_2
+    task: sokoban_coord
+    model_size: 3b
+    algo: ppo
+    think: true
+    starpos: true
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: sokoban_coord_3b_base_ppo_nothink_s
+    task: sokoban_coord
+    model_size: 3b
+    algo: ppo
+    think: false
+    starpos: true
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: sokoban_coord_3b_base_grpo_think_s
+    task: sokoban_coord
+    model_size: 3b
+    algo: grpo
+    think: true
+    starpos: true
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: sokoban_coord_3b_base_grpo_nothink_s
+    task: sokoban_coord
+    model_size: 3b
+    algo: grpo
+    think: false
+    starpos: true
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: sokoban_coord_3b_base_ppo_think_normal
+    task: sokoban_coord
+    model_size: 3b
+    algo: ppo
+    think: true
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: sokoban_coord_3b_base_ppo_nothink_normal
+    task: sokoban_coord
+    model_size: 3b
+    algo: ppo
+    think: false
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: sokoban_coord_3b_base_grpo_think_normal
+    task: sokoban_coord
+    model_size: 3b
+    algo: grpo
+    think: true
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: sokoban_coord_3b_base_grpo_nothink_normal
+    task: sokoban_coord
+    model_size: 3b
+    algo: grpo
+    think: false
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: frozenlake_coord_3b_base_ppo_think_normal_2
+    task: frozenlake_coord
+    model_size: 3b
+    algo: ppo
+    think: true
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: frozenlake_coord_3b_base_grpo_think_normal_2
+    task: frozenlake_coord
+    model_size: 3b
+    algo: grpo
+    think: true
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: frozenlake_coord_3b_base_grpo_nothink_normal_2
+    task: frozenlake_coord
+    model_size: 3b
+    algo: grpo
+    think: false
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: frozenlake_coord_3b_base_ppo_nothink_normal_1
+    task: frozenlake_coord
+    model_size: 3b
+    algo: ppo
+    think: false
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: webshop_3b_base_ppo_think_normal
+    task: webshop
+    model_size: 3b
+    algo: ppo
+    think: true
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: webshop_3b_base_ppo_nothink_normal_2
+    task: webshop
+    model_size: 3b
+    algo: ppo
+    think: false
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: webshop_3b_base_grpo_think_normal_1
+    task: webshop
+    model_size: 3b
+    algo: grpo
+    think: true
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: webshop_3b_base_grpo_nothink_normal_2
+    task: webshop
+    model_size: 3b
+    algo: grpo
+    think: false
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: bandit_3b_base_grpo_think_normal_1
+    task: bandit
+    model_size: 3b
+    algo: grpo
+    think: true
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: bandit_3b_base_grpo_nothink_normal_2
+    task: bandit
+    model_size: 3b
+    algo: grpo
+    think: false
+    starpos: false
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: frozenlake_coord_3b_base_ppo_think_s_2
+    task: frozenlake_coord
+    model_size: 3b
+    algo: ppo
+    think: true
+    starpos: true
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: webshop_3b_base_ppo_think_s_2
+    task: webshop
+    model_size: 3b
+    algo: ppo
+    think: true
+    starpos: true
+    klcoef: 0
+    entropyfilter: false
+
+  - runid: webshop_3b_base_ppo_think_s_entropyfilter
+    task: webshop
+    model_size: 3b
+    algo: ppo
+    think: true
+    starpos: true
+    klcoef: 0
+    entropyfilter: true
+
+  - runid: sokoban_coord_3b_base_ppo_think_s_entropyfilter_1
+    task: sokoban_coord
+    model_size: 3b
+    algo: ppo
+    think: true
+    starpos: true
+    klcoef: 0
+    entropyfilter: true
+
+  - runid: frozenlake_coord_3b_base_ppo_think_s_entvarfilter
+    task: frozenlake_coord
+    model_size: 3b
+    algo: ppo
+    think: true
+    starpos: true
+    klcoef: 0
+    entropyfilter: true
