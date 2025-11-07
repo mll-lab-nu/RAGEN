@@ -3,6 +3,7 @@ This is the environment for the ALFRED dataset.
 author: Qineng Wang
 date: 2025-03-30
 """
+import os
 import random
 import textworld
 import textworld.gym
@@ -10,8 +11,8 @@ import numpy as np
 import alfworld.agents.modules.generic as generic
 from alfworld.agents.environment.alfred_tw_env import AlfredTWEnv, AlfredDemangler, AlfredInfos
 from ragen.env.base import BaseLanguageBasedEnv
-from .config import AlfredEnvConfig
-from .utils import load_config, check_format
+from ragen.env.alfworld.config import AlfredEnvConfig
+from ragen.env.alfworld.utils import load_config, check_format
 
 class AlfredTXTEnv(BaseLanguageBasedEnv):
 
@@ -19,18 +20,20 @@ class AlfredTXTEnv(BaseLanguageBasedEnv):
     # print("initializing alfworld env")
     # NOTE Currently raw_env cannot customize config.
 
-    def __init__(self, config: AlfredEnvConfig = AlfredEnvConfig()):
+    def __init__(self, config: AlfredEnvConfig = AlfredEnvConfig(), mode='eval_in_distribution'):
+        # mode: "train", "eval_in_distribution" or "eval_out_of_distribution"
         super().__init__()
         self.config = config
         self.ACTION_LOOKUP = self.config.action_lookup
-        # raw_env_config = load_config(self.config.config_file)
-        # self.raw_env = AlfredTWEnv(config=raw_env_config, train_eval="train")
+        raw_env_config = load_config(self.config.config_file)
+        self.raw_env = AlfredTWEnv(config=raw_env_config, train_eval=mode)
         self.num_games = self.raw_env.num_games
         self.game_files = self.raw_env.game_files
-        # print(f"Overall we have {len(self.game_files)} games in split={self.raw_env.train_eval}")
-        # self.alfred_env = self.raw_env.init_env(batch_size=1)
+        print(f"Overall we have {len(self.game_files)} games in split={self.raw_env.train_eval}")
+        self.alfred_env = self.raw_env.init_env(batch_size=1)
         self.current_game_file = None
         self.render_cache = None
+        self.available_actions = None
         self.render_mode = self.config.render_mode
         assert self.render_mode == 'text'
     
@@ -40,13 +43,18 @@ class AlfredTXTEnv(BaseLanguageBasedEnv):
         If seed is provided, it deterministically selects a specific game file.
         """
         try:
-            if seed is not None:
-                np.random.seed(seed)
-                random.seed(seed)
-                game_idx = seed % len(self.game_files)
-                selected_game = self.game_files[game_idx]
+            if mode == "test":
+                if seed is None:
+                    raise ValueError("Seed must be provided in test mode.")
+                selected_game = self.game_files[seed]
             else:
-                selected_game = random.choice(self.game_files)
+                if seed is not None:
+                    np.random.seed(seed)
+                    random.seed(seed)
+                    game_idx = seed % len(self.game_files)
+                    selected_game = self.game_files[game_idx]
+                else:
+                    selected_game = random.choice(self.game_files)
             
             self.current_game_file = selected_game
             
@@ -71,6 +79,8 @@ class AlfredTXTEnv(BaseLanguageBasedEnv):
             
             obs, info = self.alfred_env.reset()
             self.render_cache = obs[0]
+            self.available_actions = info["admissible_commands"][0]
+            self.instruction_text = obs[0]
             return self.render_cache
             
         except (RuntimeError, RuntimeWarning) as e:
@@ -103,17 +113,18 @@ class AlfredTXTEnv(BaseLanguageBasedEnv):
         The action must match one of the templates in ACTION_LOOKUP.
         """
         valid_action = check_format(action, self.ACTION_LOOKUP.values())
-        
+        action_is_available = True if action in self.available_actions else False
         if not valid_action:
             return f"Invalid action format: {action}", 0, False, {"action_is_effective": False, "action_is_valid": False, "success": False}
         
         obs, rewards, dones, infos = self.alfred_env.step([action])  # BatchEnv expects a list of commands
-        
+        print("infos",infos)
         observation = obs[0]
+        self.available_actions = infos["admissible_commands"][0]
         self.render_cache = observation
         base_reward = rewards[0]
         done = dones[0]
-        info = {"action_is_effective": True, "action_is_valid": True, "success": done}
+        info = {"action_is_effective": True, "action_is_valid": action_is_available, "success": infos["won"][0]}
         
         reward = self.compute_score(base_reward, valid_action, done)
         
@@ -127,67 +138,22 @@ class AlfredTXTEnv(BaseLanguageBasedEnv):
         self.alfred_env.close()
 
 if __name__ == "__main__":
+    import os
+    os.environ["ALFWORLD_DATA"] = "./data/alfworld"
     env = AlfredTXTEnv()
     
     # Test resetting environment with same seed
     print("\n\n=== Testing environment reset with same seed ===")
     seed = 42
     obs1 = env.reset(seed)
-    print(f"First observation with seed={seed}: {obs1}")
-    game_file1 = env.current_game_file
-    print(f"Loaded game file: {game_file1}")
-    print("-"*100)
-    
-    # Using same seed again
-    obs2 = env.reset(seed)
-    print(f"Second observation with seed={seed}: {obs2}")
-    game_file2 = env.current_game_file
-    print(f"Loaded game file: {game_file2}")
-    print(f"Both loaded game files are identical: {game_file1 == game_file2}")
-    print("-"*100)
-    # Test different seed
-    print("\n\n=== Testing different seed ===")
-    seed = 1000
-    obs1 = env.reset(seed)
-    print(f"First observation with seed={seed}: {obs1}")
-    game_file1 = env.current_game_file
-    print(f"Loaded game file: {game_file1}")
-    print("-"*100)
-
-    # Test step method
-    print("\n=== Testing step method ===")
-    # Try "look" action
-    action = "look"
-    print(f"Executing action: {action}")
-    obs, reward, done, info = env.step(action)
-    print(f"Observation: {obs}...")
-    print(f"Reward: {reward}, Done: {done}, Info: {info}")
-    
-    # Try "inventory" action
-    action = "inventory"
-    print(f"Executing action: {action}")
-    obs, reward, done, info = env.step(action)
-    print(f"Observation: {obs}...")
-    print(f"Reward: {reward}, Done: {done}, Info: {info}")
-    
-    # Test with a templated action
-    action = "go to garbagecan 1"
-    print(f"Executing action: {action}")
-    obs, reward, done, info = env.step(action)
-    print(f"Observation: {obs}...")
-    print(f"Reward: {reward}, Done: {done}, Info: {info}")
-
-    # Test next action "go to chair 1"
-    action = "go to chair 1"
-    print(f"Executing action: {action}")
-    obs, reward, done, info = env.step(action)
-    print(f"Observation: {obs}...")
-    print(f"Reward: {reward}, Done: {done}, Info: {info}")
-
-    # Test an invalid action
-    action = "goto chair 2"
-    print(f"Executing action: {action}")
-    obs, reward, done, info = env.step(action)
-    print(f"Observation: {obs}...")
-    print(f"Reward: {reward}, Done: {done}, Info: {info}")
+    for i in range(52):
+        print("Observation:", obs1)
+        action = "go to shelf 2"
+        if action.lower() == "exit":
+            break
+        obs1, reward, done, info = env.step(action)
+        
+        print(f"Reward: {reward}, Done: {done}, Info: {info}")
+        if done:
+            break
     
