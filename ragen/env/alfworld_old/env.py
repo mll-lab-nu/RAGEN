@@ -118,7 +118,6 @@ class AlfredTXTEnv(BaseLanguageBasedEnv):
             return f"Invalid action format: {action}", 0, False, {"action_is_effective": False, "action_is_valid": False, "success": False}
         
         obs, rewards, dones, infos = self.alfred_env.step([action])  # BatchEnv expects a list of commands
-        print("infos",infos)
         observation = obs[0]
         self.available_actions = infos["admissible_commands"][0]
         self.render_cache = observation
