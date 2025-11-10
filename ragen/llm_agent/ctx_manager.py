@@ -337,8 +337,8 @@ class ContextManager:
             llm_inputs.batch["rm_scores"] = normalized_score_tensor # remove the first token
             llm_inputs.batch["original_rm_scores"] = score_tensor # remove the first token
         llm_inputs.non_tensor_batch = {
-            "env_ids": np.array([env_output["env_id"] for env_output in env_outputs], dtype=object),
-            "group_ids": np.array([env_output["group_id"] for env_output in env_outputs], dtype=object),
+            "env_ids": np.array([env_output["env_id"] for env_output in env_outputs], dtype=int),
+            "group_ids": np.array([env_output["group_id"] for env_output in env_outputs], dtype=int),
             "messages_list": np.array(messages_list, dtype=object),
         }
 

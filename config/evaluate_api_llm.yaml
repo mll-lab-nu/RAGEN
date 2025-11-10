@@ -50,7 +50,7 @@ es_manager:
     env_groups: 256
     group_size: 1 # should be set to 1 because val temperature is set to 0 and same prompt leads to same output
     env_configs:
-      tags: ["SimpleSokoban"]
+      tags: ["CoordSokoban"]
       n_groups: [256] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
 
 

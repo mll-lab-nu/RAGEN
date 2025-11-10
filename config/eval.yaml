@@ -8,11 +8,7 @@ seed:
   train: 10000
   val: 123
 
-micro_batch_size_per_gpu: 4
-ppo_mini_batch_size: 32
 model_path: Qwen/Qwen2.5-3B-Instruct
-enable_response_mask: True
-grpo_advantage_length_weight: False
 
 lora:
   rank: 0
@@ -33,14 +29,8 @@ actor_rollout_ref:
     max_model_len: 3600
     prompt_length: 1
     response_length: 400
-    gpu_memory_utilization: 0.5
+    gpu_memory_utilization: 0.9
     max_num_batched_tokens: 8192
-    temperature: 1.0
-    top_p: 1.0
-    top_k: 0
-    rollout_filter_ratio: 0.25
-    rollout_filter_type: largest
-    rollout_filter_metric: reward_variance
     enforce_eager: True
     free_cache_engine: True
     enable_chunked_prefill: False
@@ -49,7 +39,8 @@ actor_rollout_ref:
       do_sample: True
       temperature: 0.5
       top_p: 1.0
-      top_k: 0
+      top_k: -1
+      logprobs: 20 # return top20 logprobs
 
 agent_proxy:
   max_context_window: -1
@@ -68,13 +59,13 @@ es_manager:
     env_groups: 8
     group_size: 16
     env_configs:
-      tags: ["SimpleSokoban"]
+      tags: ["CoordSokoban"]
       n_groups: [8]
   val:
     env_groups: 32
     group_size: 16
     env_configs:
-      tags: ["SimpleSokoban"]
+      tags: ["CoordSokoban"]
       n_groups: [32]
 
 ctx_manager:

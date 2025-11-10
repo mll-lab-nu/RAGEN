@@ -8,7 +8,7 @@ trainer:
 es_manager:
   train:
     env_configs:
-      tags: ["FrozenLake"]
+      tags: ["CoordFrozenLake"]
   val:
     env_configs:
-      tags: ["FrozenLake"]
+      tags: ["CoordFrozenLake"]

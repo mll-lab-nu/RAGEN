@@ -12,7 +12,7 @@ from .base_llm import ConcurrentLLM
 import time
 from hydra.utils import to_absolute_path
 from omegaconf import OmegaConf
-
+import numpy as np
 
 class VllmWrapperWg: # Thi is a developing class for eval and test
 	def __init__(self, config, tokenizer):
@@ -49,6 +49,7 @@ class VllmWrapperWg: # Thi is a developing class for eval and test
 			temperature=ro_config.val_kwargs.temperature,
 			top_p=ro_config.val_kwargs.top_p,
 			top_k=ro_config.val_kwargs.top_k,
+			logprobs=ro_config.val_kwargs.logprobs,
 			# min_p=0.1,
 		)
 
@@ -68,12 +69,32 @@ class VllmWrapperWg: # Thi is a developing class for eval and test
 		input_texts = [i.replace("<|endoftext|>", "") for i in input_texts]
 
 		outputs = self.llm.generate(input_texts, sampling_params=self.sampling_params)
-		texts = [output.outputs[0].text for output in outputs] 
+		texts = [output.outputs[0].text for output in outputs]
+
+		# get the entropy of the response
+		entropys = []
+		all_logprobs = [output.outputs[0].logprobs for output in outputs]
+		for logprob_in_a_series in all_logprobs:
+			entropy_of_the_series = []
+			for logprob_in_a_token in logprob_in_a_series:
+				logprobs = np.array([i.logprob for i in logprob_in_a_token.values()])
+				entropy_of_the_token = - (logprobs * np.exp(logprobs)).sum()
+				entropy_of_the_series.append(entropy_of_the_token)
+			entropy_of_the_series = np.array(entropy_of_the_series)
+			entropy_of_the_series = entropy_of_the_series.sum()
+			entropys.append(entropy_of_the_series)
+		entropys = np.array(entropys)
+		n_tokens = [len(logprob_in_a_series) for logprob_in_a_series in all_logprobs]
+		n_tokens = np.array(n_tokens)
+
+		# get the in_group_std of the response
 		lm_outputs = DataProto()
 		lm_outputs.non_tensor_batch = {
 			'response_texts': texts,
 			'env_ids': lm_inputs.non_tensor_batch['env_ids'],
-			'group_ids': lm_inputs.non_tensor_batch['group_ids']
+			'group_ids': lm_inputs.non_tensor_batch['group_ids'],
+			'entropys': entropys,
+			'n_tokens': n_tokens,
 		} # this is a bit hard-coded to bypass the __init__ check in DataProto
 		lm_outputs.meta_info = lm_inputs.meta_info
 
@@ -170,6 +191,8 @@ class LLMAgentProxy:
 		finalized = False
 		last_inputs = None
 
+		n_tokens, entropys = np.zeros(len(env_outputs)), np.zeros(len(env_outputs)) # to calculate instance-level entropy
+
 		for i in range(max_turn):
 			if len(env_outputs) == 0:
 				break
@@ -187,6 +210,12 @@ class LLMAgentProxy:
 				mode = "singleturn"
 			lm_inputs.meta_info["mode"] = mode
 			lm_outputs: DataProto = self.generate_sequences(lm_inputs)
+
+			# calculate entropy
+			turn_entropy, env_ids = lm_outputs.non_tensor_batch['entropys'], lm_outputs.non_tensor_batch['env_ids']
+			n_tokens[env_ids] += lm_outputs.non_tensor_batch['n_tokens']
+			entropys[env_ids] += turn_entropy
+
 			if mode == "multiturn-end":
 				finalized = True
 			env_inputs: List[Dict] = ctx_manager.get_env_inputs(lm_outputs)
@@ -205,53 +234,12 @@ class LLMAgentProxy:
 			self.generate_sequences(last_inputs)
 		rollout_states = es_manager.get_rollout_states() 
 		rollouts = ctx_manager.formulate_rollouts(rollout_states)
-		# self.tokenizer.batch_decode(rollouts.batch['input_ids'], skip_special_tokens=False) # see all the trajectories
+
+		# calculate instance-level entropy
+		rollouts.non_tensor_batch['entropys'] = entropys / n_tokens
+		rollouts.non_tensor_batch['n_generated_tokens'] = n_tokens
+
 		return rollouts
-
-def _coerce_to_list(value: Optional[List[str]]):
-	if value is None:
-		return None
-	if isinstance(value, list):
-		return value
-	if isinstance(value, tuple):
-		return list(value)
-	return [value]
-
-
-def _select_batch_keys(batch, keep_keys: Optional[List[str]]):
-	if batch is None:
-		return None
-	if keep_keys is None:
-		return batch
-	if len(keep_keys) == 0:
-		return None
-	missing = [key for key in keep_keys if key not in batch.keys()]
-	if missing:
-		raise KeyError(f"Requested batch keys {missing} not found in rollout batch")
-	return batch.select(*keep_keys)
-
-
-def _select_non_tensor_batch(non_tensor_batch, keep_keys: Optional[List[str]]):
-	if non_tensor_batch is None or len(non_tensor_batch) == 0:
-		return None
-	if keep_keys is None:
-		return non_tensor_batch
-	if len(keep_keys) == 0:
-		return None
-	return {k: non_tensor_batch[k] for k in keep_keys if k in non_tensor_batch}
-
-
-def _maybe_filter_rollouts(rollouts: DataProto, output_cfg: Optional[Dict]):
-	if output_cfg is None:
-		return rollouts
-	keep_batch_keys = _coerce_to_list(output_cfg.get("keep_batch_keys"))
-	keep_non_tensor_keys = _coerce_to_list(output_cfg.get("keep_non_tensor_keys"))
-	keep_meta = output_cfg.get("keep_meta_info", True)
-	filtered_batch = _select_batch_keys(rollouts.batch, keep_batch_keys)
-	filtered_non_tensor = _select_non_tensor_batch(rollouts.non_tensor_batch, keep_non_tensor_keys)
-	meta = rollouts.meta_info if keep_meta else {}
-	return DataProto(batch=filtered_batch, non_tensor_batch=filtered_non_tensor, meta_info=meta)
-
 
 def _normalize_output_cfg(config) -> Optional[Dict]:
 	if not hasattr(config, "output"):
@@ -294,7 +282,13 @@ def main(config):
 	import time
 
 	start_time = time.time()
-	rollouts = proxy.rollout(DataProto(batch=None, non_tensor_batch=None, meta_info={'eos_token_id': 151645, 'pad_token_id': 151643, 'recompute_log_prob': False, 'do_sample':config.actor_rollout_ref.rollout.do_sample, 'validate': True}), val=True)
+	rollouts = proxy.rollout(
+		DataProto(
+			batch=None, non_tensor_batch=None, meta_info={
+				'eos_token_id': 151645, 'pad_token_id': 151643, 'recompute_log_prob': False, 'do_sample':config.actor_rollout_ref.rollout.val_kwargs.do_sample, 'validate': True
+				}
+			), val=True
+		)
 	end_time = time.time()
 	print(f'rollout time: {end_time - start_time} seconds')
 	# print rollout rewards from the rm_scores
@@ -310,9 +304,9 @@ def main(config):
 	timestamp = time.strftime("%Y%m%d_%H%M%S")
 	output_cfg = _normalize_output_cfg(config)
 	save_path = _build_save_path(config, output_cfg, timestamp)
-	filtered_rollouts = _maybe_filter_rollouts(rollouts, output_cfg)
-	filtered_rollouts.save_to_disk(save_path)
-	print(f'save validation results to {save_path}. To visualize, run: python scripts/visualize.py --rollout_path {save_path}')
+	rollouts.save_to_disk(save_path)
+	dir_path = os.path.dirname(save_path)
+	print(f'save validation results to {save_path}. To visualize, run: python scripts/visualize.py --rollout_path {dir_path}')
 
 
 if __name__ == "__main__":

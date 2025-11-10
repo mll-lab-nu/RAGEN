@@ -123,13 +123,13 @@ es_manager:
     # under the same group, the env config and env seed are ensured to be equal
     group_size: 16
     env_configs:
-      tags: ["SimpleSokoban"]
+      tags: ["CoordSokoban"]
       n_groups: [8] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
   val:
     env_groups: 32
     group_size: 16 # should be set to 1 because when val temperature is set to 0 and group size > 1, there will be repetitive prompts which leads to same trajectory.
     env_configs:
-      tags: ["SimpleSokoban"]
+      tags: ["CoordSokoban"]
       n_groups: [32] # TODO: If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
 
 ctx_manager:
