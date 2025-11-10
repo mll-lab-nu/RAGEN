@@ -227,6 +227,19 @@ RAGEN provides a easy way to evaluate a model:
 ```bash
 python -m ragen.llm_agent.agent_proxy --config-name <eval_config>
 ```
+The proxy now loads `config/eval.yaml` by default, which only keeps the rollout-specific knobs required for evaluation. You can still point to any other file via `--config-name`. Each evaluation config supports an `output` block so you can control where rollouts are stored and which fields are persisted:
+
+```yaml
+output:
+  dir: results/eval
+  filename: val_rollouts.pkl
+  append_timestamp: true   # include run timestamp in the file name
+  keep_batch_keys: ["rm_scores", "responses"]   # set to null to keep everything
+  keep_non_tensor_keys: null
+  keep_meta_info: true
+```
+
+With this configuration the proxy filters the `DataProto` before saving (handy if you want to drop large tensors such as log-probs) and places the artifact directly under `results/eval`.  
 You only need to set model and environment to evaluate in `config/<eval_config>.yaml`.  
 To limit how many previous turns the model sees during evaluation, you can set `agent_proxy.max_context_window` in your config file.
 

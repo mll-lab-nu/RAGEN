@@ -1,0 +1,95 @@
+defaults:
+  - envs
+
+system:
+  CUDA_VISIBLE_DEVICES: "0"
+
+seed:
+  train: 10000
+  val: 123
+
+micro_batch_size_per_gpu: 4
+ppo_mini_batch_size: 32
+model_path: Qwen/Qwen2.5-3B-Instruct
+enable_response_mask: True
+grpo_advantage_length_weight: False
+
+lora:
+  rank: 0
+  alpha: 64
+  target_modules: all-linear
+
+actor_rollout_ref:
+  model:
+    path: ${model_path}
+    lora_rank: ${lora.rank}
+    lora_alpha: ${lora.alpha}
+    target_modules: ${lora.target_modules}
+  rollout:
+    name: vllm
+    log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu}
+    tensor_model_parallel_size: 1
+    dtype: bfloat16
+    max_model_len: 3600
+    prompt_length: 1
+    response_length: 400
+    gpu_memory_utilization: 0.5
+    max_num_batched_tokens: 8192
+    temperature: 1.0
+    top_p: 1.0
+    top_k: 0
+    rollout_filter_ratio: 0.25
+    rollout_filter_type: largest
+    rollout_filter_metric: reward_variance
+    enforce_eager: True
+    free_cache_engine: True
+    enable_chunked_prefill: False
+    disable_log_stats: False
+    val_kwargs:
+      do_sample: True
+      temperature: 0.5
+      top_p: 1.0
+      top_k: 0
+
+agent_proxy:
+  max_context_window: -1
+  max_turn: 5
+  action_sep: "||"
+  max_actions_per_turn: 2
+  use_turn_scores: False
+  enable_think: True
+  reward_normalization:
+    grouping: "state"
+    method: "identity"
+
+es_manager:
+  format_penalty: -0.1
+  train:
+    env_groups: 8
+    group_size: 16
+    env_configs:
+      tags: ["SimpleSokoban"]
+      n_groups: [8]
+  val:
+    env_groups: 32
+    group_size: 16
+    env_configs:
+      tags: ["SimpleSokoban"]
+      n_groups: [32]
+
+ctx_manager:
+  generation:
+    gen_config:
+      response_length: ${actor_rollout_ref.rollout.response_length}
+      temperature: ${actor_rollout_ref.rollout.temperature}
+      top_p: ${actor_rollout_ref.rollout.top_p}
+      top_k: ${actor_rollout_ref.rollout.top_k}
+      kwargs: null
+
+output:
+  dir: results/eval
+  filename: val_rollouts.pkl
+  append_timestamp: true
+  keep_batch_keys: null
+  keep_non_tensor_keys: null
+  keep_meta_info: true

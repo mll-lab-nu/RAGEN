@@ -6,10 +6,12 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from verl import DataProto
 import hydra
 import os
-from typing import List, Dict
+from typing import List, Dict, Optional
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 from .base_llm import ConcurrentLLM
 import time
+from hydra.utils import to_absolute_path
+from omegaconf import OmegaConf
 
 
 class VllmWrapperWg: # Thi is a developing class for eval and test
@@ -206,9 +208,84 @@ class LLMAgentProxy:
 		# self.tokenizer.batch_decode(rollouts.batch['input_ids'], skip_special_tokens=False) # see all the trajectories
 		return rollouts
 
-@hydra.main(version_base=None, config_path="../../config", config_name="base")
+def _coerce_to_list(value: Optional[List[str]]):
+	if value is None:
+		return None
+	if isinstance(value, list):
+		return value
+	if isinstance(value, tuple):
+		return list(value)
+	return [value]
+
+
+def _select_batch_keys(batch, keep_keys: Optional[List[str]]):
+	if batch is None:
+		return None
+	if keep_keys is None:
+		return batch
+	if len(keep_keys) == 0:
+		return None
+	missing = [key for key in keep_keys if key not in batch.keys()]
+	if missing:
+		raise KeyError(f"Requested batch keys {missing} not found in rollout batch")
+	return batch.select(*keep_keys)
+
+
+def _select_non_tensor_batch(non_tensor_batch, keep_keys: Optional[List[str]]):
+	if non_tensor_batch is None or len(non_tensor_batch) == 0:
+		return None
+	if keep_keys is None:
+		return non_tensor_batch
+	if len(keep_keys) == 0:
+		return None
+	return {k: non_tensor_batch[k] for k in keep_keys if k in non_tensor_batch}
+
+
+def _maybe_filter_rollouts(rollouts: DataProto, output_cfg: Optional[Dict]):
+	if output_cfg is None:
+		return rollouts
+	keep_batch_keys = _coerce_to_list(output_cfg.get("keep_batch_keys"))
+	keep_non_tensor_keys = _coerce_to_list(output_cfg.get("keep_non_tensor_keys"))
+	keep_meta = output_cfg.get("keep_meta_info", True)
+	filtered_batch = _select_batch_keys(rollouts.batch, keep_batch_keys)
+	filtered_non_tensor = _select_non_tensor_batch(rollouts.non_tensor_batch, keep_non_tensor_keys)
+	meta = rollouts.meta_info if keep_meta else {}
+	return DataProto(batch=filtered_batch, non_tensor_batch=filtered_non_tensor, meta_info=meta)
+
+
+def _normalize_output_cfg(config) -> Optional[Dict]:
+	if not hasattr(config, "output"):
+		return None
+	return OmegaConf.to_object(config.output)
+
+
+def _build_save_path(config, output_cfg: Optional[Dict], timestamp: str) -> str:
+	if output_cfg is None:
+		trainer_cfg = getattr(config, "trainer", None)
+		base_dir_raw = getattr(trainer_cfg, "local_log_dir", "results") if trainer_cfg is not None else "results"
+		exp_name = getattr(trainer_cfg, "experiment_name", "eval") if trainer_cfg is not None else "eval"
+		base_dir = to_absolute_path(base_dir_raw)
+		save_dir = os.path.join(base_dir, f"{exp_name}_{timestamp}")
+		os.makedirs(save_dir, exist_ok=True)
+		return os.path.join(save_dir, "val_rollouts.pkl")
+	output_dir = to_absolute_path(output_cfg.get("dir", "results/eval"))
+	os.makedirs(output_dir, exist_ok=True)
+	filename = output_cfg.get("filename") or "val_rollouts.pkl"
+	append_timestamp = output_cfg.get("append_timestamp", True)
+	root, ext = os.path.splitext(filename)
+	if not ext:
+		ext = ".pkl"
+	if append_timestamp:
+		filename = f"{root}_{timestamp}{ext}"
+	else:
+		filename = f"{root}{ext}"
+	return os.path.join(output_dir, filename)
+
+
+@hydra.main(version_base=None, config_path="../../config", config_name="eval")
 def main(config):
 	# detect config name from python -m ragen.llm_agent.agent_proxy --config_name frozen_lake
+	print("Starting evaluation process. Check config/eval.yaml for specific configs.")
 	os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 	os.environ["CUDA_VISIBLE_DEVICES"] = str(config.system.CUDA_VISIBLE_DEVICES)
 	tokenizer = AutoTokenizer.from_pretrained(config.actor_rollout_ref.model.path)
@@ -231,34 +308,11 @@ def main(config):
 
 	# save to config.trainer.local_log_dir/config.trainer.experiment_name + _ + timestamp
 	timestamp = time.strftime("%Y%m%d_%H%M%S")
-	save_dir = os.path.join(config.trainer.local_log_dir, config.trainer.experiment_name + "_" + timestamp, "val_rollouts.pkl")
-	os.makedirs(os.path.dirname(save_dir), exist_ok=True)
-	# save the data
-	rollouts.save_to_disk(save_dir)
-	# print save to ..
-	print(f'save validation results to {save_dir}. To visualize, run: python scripts/visualize.py --rollout_path {config.trainer.local_log_dir}')
-
-# @hydra.main(version_base=None, config_path="../../config", config_name="evaluate_api_llm")
-# def main(config):
-# 	# detect config name from python -m ragen.llm_agent.agent_proxy --config_name frozen_lake
-# 	tokenizer = AutoTokenizer.from_pretrained(config.actor_rollout_ref.model.path)
-# 	actor_wg = ApiCallingWrapperWg(config, tokenizer)
-# 	proxy = LLMAgentProxy(config, actor_wg, tokenizer)
-# 	import time
-# 	start_time = time.time()
-# 	rollouts = proxy.rollout(DataProto(batch=None, non_tensor_batch=None, meta_info={'eos_token_id': 151645, 'pad_token_id': 151643, 'recompute_log_prob': False, 'do_sample': False, 'validate': True}), val=True)
-# 	print(f'[DEBUG] rollouts: {rollouts}')
-# 	end_time = time.time()
-# 	print(f'rollout time: {end_time - start_time} seconds')
-# 	# print rollout rewards from the rm_scores
-# 	rm_scores = rollouts.batch["rm_scores"]
-# 	metrics = rollouts.meta_info["metrics"]
-# 	avg_reward = rm_scores.sum(-1).mean().item()
-# 	print(f'rollout rewards: {avg_reward}')
-# 	print(f'metrics:')
-# 	for k, v in metrics.items():
-# 		print(f'{k}: {v}')
-
+	output_cfg = _normalize_output_cfg(config)
+	save_path = _build_save_path(config, output_cfg, timestamp)
+	filtered_rollouts = _maybe_filter_rollouts(rollouts, output_cfg)
+	filtered_rollouts.save_to_disk(save_path)
+	print(f'save validation results to {save_path}. To visualize, run: python scripts/visualize.py --rollout_path {save_path}')
 
 
 if __name__ == "__main__":
