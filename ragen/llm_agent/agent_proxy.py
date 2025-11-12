@@ -212,9 +212,10 @@ class LLMAgentProxy:
 			lm_outputs: DataProto = self.generate_sequences(lm_inputs)
 
 			# calculate entropy
-			turn_entropy, env_ids = lm_outputs.non_tensor_batch['entropys'], lm_outputs.non_tensor_batch['env_ids']
-			n_tokens[env_ids] += lm_outputs.non_tensor_batch['n_tokens']
-			entropys[env_ids] += turn_entropy
+			if 'entropys' in lm_outputs.non_tensor_batch:
+				turn_entropy, env_ids = lm_outputs.non_tensor_batch['entropys'], lm_outputs.non_tensor_batch['env_ids']
+				n_tokens[env_ids] += lm_outputs.non_tensor_batch['n_tokens']
+				entropys[env_ids] += turn_entropy
 
 			if mode == "multiturn-end":
 				finalized = True
@@ -236,8 +237,9 @@ class LLMAgentProxy:
 		rollouts = ctx_manager.formulate_rollouts(rollout_states)
 
 		# calculate instance-level entropy
-		rollouts.non_tensor_batch['entropys'] = entropys / n_tokens
-		rollouts.non_tensor_batch['n_generated_tokens'] = n_tokens
+		if 'entropys' in rollouts.non_tensor_batch:
+			rollouts.non_tensor_batch['entropys'] = entropys / n_tokens
+			rollouts.non_tensor_batch['n_generated_tokens'] = n_tokens
 
 		return rollouts
 
