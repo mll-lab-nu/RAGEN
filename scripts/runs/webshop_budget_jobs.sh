@@ -4,7 +4,7 @@ set -euo pipefail
 MODEL="Qwen/Qwen2.5-3B-Instruct"
 PROJ="budget_main"
 BASE_DIR="/blob/v-zihanwang/budget_checkpoints"
-DEVICES="0,1,2,3,4,5,6,7"
+DEVICES=\"0,1,2,3,4,5,6,7\"
 
 run_experiment() {
   local turns=$1
@@ -30,7 +30,7 @@ run_experiment() {
     trainer.project_name="${PROJ}" \
     micro_batch_size_per_gpu=1 \
     trainer.experiment_name="${exp_name}" \
-    es_manager.train.env_groups=8 es_manager.train.group_size=16 es_manager.train.env_configs.n_groups='[2]' \
+    es_manager.train.env_groups=8 es_manager.train.group_size=16 es_manager.train.env_configs.n_groups='[8]' \
     es_manager.val.env_groups=64 es_manager.val.group_size=8 es_manager.val.env_configs.n_groups='[64]' \
     system.CUDA_VISIBLE_DEVICES="${DEVICES}" trainer.n_gpus_per_node=8 actor_rollout_ref.rollout.tensor_model_parallel_size=8 \
     trainer.resume_mode=disable \
@@ -49,9 +49,9 @@ run_experiment() {
 main() {
   run_experiment 3
   run_experiment 4
-  run_experiment 5
-  run_experiment 6
-  run_experiment 7
+#   run_experiment 5
+#   run_experiment 6
+#   run_experiment 7
 }
 
 main "$@"
