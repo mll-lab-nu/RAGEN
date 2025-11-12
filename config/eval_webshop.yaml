@@ -1,0 +1,31 @@
+defaults:
+  - base  # inherit the base training/eval config
+
+system:
+  CUDA_VISIBLE_DEVICES: "0,1,2,3"        # change to your GPU layout
+
+trainer:
+  # Evaluation-only run (no training)
+  val_only: true
+  val_before_train: false
+  total_training_steps: 0
+  validation_steps: 1                     # e.g., each step may launch a fixed number of rollouts
+  test_freq: 0
+  logger: [console]                       # turn off W&B
+  save_freq: -1                           # no checkpoints
+  experiment_name: webshop_10turns_eval   # ASCII only; keep concise
+
+  # Resume a pre-trained checkpoint to evaluate
+  resume_mode: resume_path
+  resume_from_path: /ABSOLUTE/PATH/TO/checkpoints/webshop_12turns_200steps_grpo/global_step_200  # <- set this
+
+use_critic: false                         # no critic during eval
+
+# Rollout / decoding behavior
+actor_rollout_ref:
+  rollout:
+    do_sample: false                      # deterministic (greedy). For a stochastic pass, flip to true and set temperature/top_p elsewhere
+
+# Evaluation horizon
+agent_proxy:
+  max_turn: 10                            # align with experiment_name; change to 12/18 if you want longer horizons
