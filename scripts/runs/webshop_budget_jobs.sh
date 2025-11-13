@@ -8,7 +8,7 @@ DEVICES=\"0,1,2,3,4,5,6,7\"
 
 run_experiment() {
   local turns=$1
-  local exp_name="webshop_starpos_grpo_3b_small_max_${turns}turns"
+  local exp_name=$2
   local out_dir="${BASE_DIR}/${exp_name}"
 
   if [[ "$turns" -ge 7 ]]; then
@@ -39,19 +39,19 @@ run_experiment() {
     agent_proxy.max_turn="${turns}" \
     actor_rollout_ref.rollout.max_model_len="${max_len}" actor_rollout_ref.rollout.max_num_batched_tokens="${max_tok}" \
     trainer.default_local_dir="${out_dir}" \
-    trainer.max_actor_ckpt_to_keep=1 \
-    trainer.max_critic_ckpt_to_keep=1 \
+    trainer.max_actor_ckpt_to_keep=4 \
+    trainer.max_critic_ckpt_to_keep=4 \
     custom_envs.WebShop.max_actions_per_traj="${turns}" \
     actor_rollout_ref.actor.use_ref=False \
     trainer.nnodes=1
 }
 
 main() {
-  run_experiment 3
-  run_experiment 4
-#   run_experiment 5
-#   run_experiment 6
-#   run_experiment 7
+  # run_experiment 3 "webshop_starpos_grpo_3b_small_max_3turns"
+  # run_experiment 4 "webshop_starpos_grpo_3b_small_max_4turns"
+  # run_experiment 5 "webshop_starpos_grpo_3b_small_max_5turns"
+  # run_experiment 6 "webshop_starpos_grpo_3b_small_max_6turns"
+  # run_experiment 7 "webshop_starpos_grpo_3b_small_max_7turns"
 }
 
 main "$@"
