@@ -27,6 +27,7 @@ debugpy
 
 together
 anthropic
+faiss-cpu==1.11.0
 
 # This is optional, but needs to be installed with main requirements if you want to use webshop
 -r external/webshop-minimal/requirements.txt
