@@ -399,7 +399,7 @@ def main(config):
 	actor_wg = VllmWrapperWg(config, tokenizer)
 	proxy = LLMAgentProxy(config, actor_wg, tokenizer)
 	try:
-		for max_turn in range(5,16):
+		for max_turn in range(3,11):
 			with open_dict(config.agent_proxy):
 				config.agent_proxy.max_turn = max_turn
 			
