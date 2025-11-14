@@ -1,4 +1,8 @@
 exp_name=webshop_starpos_grpo_3b_small_max_3turns_2
+# exp_name=webshop_starpos_grpo_3b_small_max_4turns_2
+# exp_name=webshop_starpos_grpo_3b_small_max_5turns_2
+# exp_name=webshop_starpos_grpo_3b_small_max_6turns_2
+# exp_name=webshop_starpos_grpo_3b_small_max_7turns_2
 
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
 WANDB_RUN_ID=${exp_name} \

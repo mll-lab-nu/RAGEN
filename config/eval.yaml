@@ -1,5 +1,6 @@
 defaults:
   - envs
+  - base
 
 system:
   CUDA_VISIBLE_DEVICES: "0"
