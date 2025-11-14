@@ -9,6 +9,7 @@ seed:
   val: 123
 
 model_path: Qwen/Qwen2.5-3B-Instruct
+enable_response_mask: True
 
 lora:
   rank: 0
