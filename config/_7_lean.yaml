@@ -1,0 +1,27 @@
+defaults:
+  - base
+
+system:
+  CUDA_VISIBLE_DEVICES: "0,1,2,3"
+
+trainer:
+  experiment_name: lean
+  n_gpus_per_node: 4
+
+agent_proxy:
+  max_turn: 15
+  max_actions_per_turn: 4
+  max_context_window: 5
+
+actor_rollout_ref:
+  rollout:
+    max_model_len: 8096
+    response_length: 512
+
+es_manager:
+  train:
+    env_configs:
+      tags: ["Lean"]
+  val:
+    env_configs:
+      tags: ["Lean"]

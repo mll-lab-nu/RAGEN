@@ -31,3 +31,8 @@ faiss-cpu==1.11.0
 
 # This is optional, but needs to be installed with main requirements if you want to use webshop
 -r external/webshop-minimal/requirements.txt
+
+# This is optional, but needs to be installed with main requirements if you want to use lean environment
+# Note that we only need the client side sdk so the requirements inside kimina-lean-server itself can be separated
+# as long as there is an available kimina-lean-server running.
+kimina-client

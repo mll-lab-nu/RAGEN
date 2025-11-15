@@ -4,3 +4,6 @@
 [submodule "external/webshop-minimal"]
 	path = external/webshop-minimal
 	url = https://github.com/ZihanWang314/webshop-minimal.git
+[submodule "external/kimina-lean-server"]
+	path = external/kimina-lean-server
+	url = https://github.com/project-numina/kimina-lean-server.git
