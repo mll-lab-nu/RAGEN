@@ -215,4 +215,6 @@ custom_envs:
     max_actions_per_traj: 30
     env_instruction: "You are a Lean theorem prover. Given a Lean theorem statement, propose a sequence of tactics that completes the proof. Think step by step about which tactics to apply next. Provide tactics separated by '||', for example <answer>intro || simp || rfl</answer>."
     max_tokens: 512
+    parallel_friendly: true
+    max_workers: 32
     env_config: null # Please refer to ragen/env/lean/config.py for a full list of parameters.
