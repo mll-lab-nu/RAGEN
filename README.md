@@ -299,8 +299,11 @@ To add a new environment to our framework:
        - env_type: new_env  # Must match environment class name
        - max_actions_per_traj: 50  # Example value
        - env_instruction: "Your environment instructions here"
+       - parallel_friendly: false # Set to true if your environment supports parallel execution.
+       - max_workers: 128 # If parallel_friendly=True, max_workers threads will be used.
        - env_config: {}  # Configuration options from config.py
    ```
+   (Hint: Due to the extra time cost associated with using a thread pool, there is a trade-off between the pool's overhead and the speed of the environment itself. It is recommended to enable the parallelism only for complex environments.)
 
 4. Add the environment tag to the `es_manager` section in `config/base.yaml`
 

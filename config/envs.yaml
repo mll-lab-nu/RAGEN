@@ -9,7 +9,7 @@ custom_envs:
       You cannot push a box through a wall, and you cannot pull a box. 
       The answer should be a sequence of actions, like <answer>Right || Right || Up</answer>
     max_tokens: 100 # used to curate llm prompt "max words", not used for rollout
-    parallel_friendly: true
+    parallel_friendly: false
     max_workers: 32
     env_config: # keys should be a subset of SokobanConfig
       dim_x: 6
@@ -27,7 +27,7 @@ custom_envs:
       You cannot push a box through a wall, and you cannot pull a box. 
       The answer should be a sequence of actions, like <answer>Right || Right || Up</answer>
     max_tokens: 100
-    parallel_friendly: true
+    parallel_friendly: false
     max_workers: 32
     env_config:
       dim_x: 8
@@ -46,7 +46,7 @@ custom_envs:
       You cannot push a box through a wall, and you cannot pull a box. 
       The answer should be a sequence of actions, like <answer>Right || Right || Up</answer>
     max_tokens: 100
-    parallel_friendly: true
+    parallel_friendly: false
     max_workers: 32
     env_config: # keys should be a subset of SokobanConfig
       search_depth: 30
@@ -68,7 +68,7 @@ custom_envs:
       You cannot push a box through a wall, and you cannot pull a box.
       The answer should be a sequence of actions, like <answer>Right || Right || Up</answer>.
     max_tokens: 120
-    parallel_friendly: true
+    parallel_friendly: false
     max_workers: 32
     env_config: # keys should be a subset of SokobanConfig
       dim_x: 6
@@ -82,7 +82,7 @@ custom_envs:
     max_actions_per_traj: 10
     env_instruction: "You are solving the Sokoban puzzle. You are the player and you need to push all boxes to targets. When you are right next to a box, you can push it by moving in the same direction. You cannot push a box through a wall, and you cannot pull a box. The answer should be a sequence of actions, like <answer>Right || Right || Up</answer>"
     max_tokens: 100
-    parallel_friendly: true
+    parallel_friendly: false
     max_workers: 32
     env_config: # keys should be a subset of SokobanConfig
       dim_x: 6
@@ -101,7 +101,7 @@ custom_envs:
     max_actions_per_traj: 1
     env_instruction: "You are solving the Countdown puzzle. You should use the num list to create an equation that equals the target. Example answer format: <think> To find an equation using [3, 5, 2] to get 4. Let's check 2 + 5 = 7, 7 - 3 = 4. So the answer is 2 + 5 - 3 = 4. </think><answer>2 + 5 - 3</answer>"
     max_tokens: 100
-    parallel_friendly: true
+    parallel_friendly: false
     max_workers: 32
     env_config: null
 
@@ -110,7 +110,7 @@ custom_envs:
     max_actions_per_traj: 1
     env_instruction: ""
     max_tokens: 100
-    parallel_friendly: true
+    parallel_friendly: false
     max_workers: 32
     env_config: 
       split: "train"
@@ -120,7 +120,7 @@ custom_envs:
     max_actions_per_traj: 1
     env_instruction: ""
     max_tokens: 100
-    parallel_friendly: true
+    parallel_friendly: false
     max_workers: 32
     env_config: 
       split: "test"
@@ -130,7 +130,7 @@ custom_envs:
     max_actions_per_traj: 10
     env_instruction: "You are solving the FrozenLake puzzle. Forbid the whole and go to the target. You may move to the unintended direction due to the slippery ice. Example answer format: <think>To forbid the hole and go to the target, I should go left then go up.</think><answer>Left || Up</answer>"
     max_tokens: 100
-    parallel_friendly: true
+    parallel_friendly: false
     max_workers: 32
     env_config: null
 
@@ -143,7 +143,7 @@ custom_envs:
       Beware that the ice is slippery, so the agent might slide and end up in an unintended tile.
       Respond with a sequence of actions such as <answer>Left || Up || Up</answer>.
     max_tokens: 120
-    parallel_friendly: true
+    parallel_friendly: false
     max_workers: 32
     env_config:
       observation_format: "grid_coord"

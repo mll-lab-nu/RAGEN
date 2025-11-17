@@ -3,6 +3,7 @@ This is the environment state manager for the LLM agent.
 author: Pingyue Zhang
 date: 2025-03-30
 """
+import atexit
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Union
@@ -46,6 +47,10 @@ class EnvStateManager:
         self.seed_counter = 0
         self._init_envs()
         self.rollout_cache = None
+        self._executors: Dict[str, ThreadPoolExecutor] = {}
+        self._executors_shutdown = False
+        self._register_parallel_executors()
+        atexit.register(self._shutdown_executors)
 
     def _init_envs(self):
         """Initialize the environments. train_envs and val_envs are lists of envs:
@@ -82,6 +87,23 @@ class EnvStateManager:
                 env_list.append(entry)
             done_groups += n_group
         return env_list
+
+    def _register_parallel_executors(self):
+        tag_seen: Dict[str, dict] = {}
+        for entry in self.envs:
+            tag = entry['tag']
+            if tag in tag_seen:
+                continue
+            tag_seen[tag] = {
+                'parallel_friendly': entry.get('parallel_friendly', False),
+                'max_workers': entry.get('max_workers', 1),
+            }
+
+        for tag, cfg in tag_seen.items():
+            parallel_friendly = cfg.get('parallel_friendly', False)
+            max_workers = cfg.get('max_workers', 1)
+            if parallel_friendly and max_workers > 1:
+                self._executors[tag] = ThreadPoolExecutor(max_workers=max_workers)
 
     def reset(self, seed: Optional[int] = None):
         """
@@ -123,16 +145,32 @@ class EnvStateManager:
         for tag, items in tag2entries.items():
             parallel_friendly = items[0][0].get('parallel_friendly', False)
             max_workers = items[0][0].get('max_workers', 1)
-            if (not parallel_friendly) or max_workers <= 1 or len(items) == 1:
+            executor = self._executors.get(tag) if parallel_friendly and max_workers > 1 else None
+            if executor is None or len(items) == 1:
                 for entry, single_seed in items:
                     env_id, next_state = _reset_single(entry, single_seed)
                     reset_results[env_id] = next_state
             else:
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = [executor.submit(_reset_single, entry, single_seed) for entry, single_seed in items]
-                    for future in futures:
+                future_map = {
+                    executor.submit(_reset_single, entry, single_seed): (entry, single_seed)
+                    for entry, single_seed in items
+                }
+                for future, (entry, single_seed) in future_map.items():
+                    try:
                         env_id, next_state = future.result()
-                        reset_results[env_id] = next_state
+                    except Exception as exc:
+                        env_id = entry['env_id']
+                        logging.error("Reset failed for env_id %s: %s", env_id, exc)
+                        try:
+                            env_id, next_state = _reset_single(entry, single_seed)
+                        except Exception as exc2:
+                            logging.error(
+                                "Fallback reset also failed for env_id %s: %s",
+                                env_id,
+                                exc2,
+                            )
+                            continue
+                    reset_results[env_id] = next_state
 
         # update rollout cache
         for cache, env in zip(rollout_cache, envs):
@@ -223,14 +261,28 @@ class EnvStateManager:
             sample_entry = envs[items[0][1]['env_id']]
             parallel_friendly = sample_entry.get('parallel_friendly', False)
             max_workers = sample_entry.get('max_workers', 1)
-            if (not parallel_friendly) or max_workers <= 1 or len(items) == 1:
+            executor = self._executors.get(tag) if parallel_friendly and max_workers > 1 else None
+            if executor is None or len(items) == 1:
                 for idx, env_input in items:
                     results[idx] = _process_env_input(env_input)
             else:
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {executor.submit(_process_env_input, env_input): idx for idx, env_input in items}
-                    for future, idx in futures.items():
+                idx2env = {idx: env_input for idx, env_input in items}
+                futures = {executor.submit(_process_env_input, env_input): idx for idx, env_input in items}
+                for future, idx in futures.items():
+                    try:
                         results[idx] = future.result()
+                    except Exception as exc:
+                        env_input = idx2env.get(idx)
+                        env_id = env_input.get('env_id') if env_input else None
+                        logging.error("Step failed for env_id %s: %s", env_id, exc)
+                        try:
+                            results[idx] = _process_env_input(env_input) if env_input else None
+                        except Exception as exc2:
+                            logging.error(
+                                "Fallback step also failed for env_id %s: %s",
+                                env_id,
+                                exc2,
+                            )
 
         for result in results:
             if result is None:
@@ -351,6 +403,20 @@ class EnvStateManager:
     def close(self):
         for entry in self.envs:
             entry['env'].close()
+        self._shutdown_executors()
+
+    def _shutdown_executors(self):
+        if getattr(self, "_executors_shutdown", False):
+            return
+        self._executors_shutdown = True
+        executors = getattr(self, "_executors", None)
+        if not executors:
+            return
+        for executor in executors.values():
+            executor.shutdown(wait=True, cancel_futures=True)
+
+    def __del__(self):
+        self._shutdown_executors()
 
 
 
