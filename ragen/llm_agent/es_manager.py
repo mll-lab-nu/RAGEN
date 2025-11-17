@@ -91,13 +91,15 @@ class EnvStateManager:
     def _register_parallel_executors(self):
         tag_seen: Dict[str, dict] = {}
         for entry in self.envs:
-            tag = entry['tag']
-            if tag in tag_seen:
-                continue
-            tag_seen[tag] = {
-                'parallel_friendly': entry.get('parallel_friendly', False),
-                'max_workers': entry.get('max_workers', 1),
+            tag = entry["tag"]
+            cfg = {
+                "parallel_friendly": entry.get("parallel_friendly", False),
+                "max_workers": entry.get("max_workers", 1),
             }
+            if tag in tag_seen:
+                assert tag_seen[tag] == cfg, f"Inconsistent config for tag {tag}: {tag_seen[tag]} vs {cfg}"
+            else:
+                tag_seen[tag] = cfg
 
         for tag, cfg in tag_seen.items():
             parallel_friendly = cfg.get('parallel_friendly', False)
@@ -253,7 +255,6 @@ class EnvStateManager:
                 for idx, env_input in items:
                     results[idx] = _process_env_input(env_input)
             else:
-                idx2env = {idx: env_input for idx, env_input in items}
                 futures = {executor.submit(_process_env_input, env_input): idx for idx, env_input in items}
                 for future, idx in futures.items():
                     results[idx] = future.result()
