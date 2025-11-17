@@ -152,24 +152,11 @@ class EnvStateManager:
                     reset_results[env_id] = next_state
             else:
                 future_map = {
-                    executor.submit(_reset_single, entry, single_seed): (entry, single_seed)
+                    executor.submit(_reset_single, entry, single_seed): entry
                     for entry, single_seed in items
                 }
-                for future, (entry, single_seed) in future_map.items():
-                    try:
-                        env_id, next_state = future.result()
-                    except Exception as exc:
-                        env_id = entry['env_id']
-                        logging.error("Reset failed for env_id %s: %s", env_id, exc)
-                        try:
-                            env_id, next_state = _reset_single(entry, single_seed)
-                        except Exception as exc2:
-                            logging.error(
-                                "Fallback reset also failed for env_id %s: %s",
-                                env_id,
-                                exc2,
-                            )
-                            continue
+                for future, entry in future_map.items():
+                    env_id, next_state = future.result()
                     reset_results[env_id] = next_state
 
         # update rollout cache
@@ -269,20 +256,7 @@ class EnvStateManager:
                 idx2env = {idx: env_input for idx, env_input in items}
                 futures = {executor.submit(_process_env_input, env_input): idx for idx, env_input in items}
                 for future, idx in futures.items():
-                    try:
-                        results[idx] = future.result()
-                    except Exception as exc:
-                        env_input = idx2env.get(idx)
-                        env_id = env_input.get('env_id') if env_input else None
-                        logging.error("Step failed for env_id %s: %s", env_id, exc)
-                        try:
-                            results[idx] = _process_env_input(env_input) if env_input else None
-                        except Exception as exc2:
-                            logging.error(
-                                "Fallback step also failed for env_id %s: %s",
-                                env_id,
-                                exc2,
-                            )
+                    results[idx] = future.result()
 
         for result in results:
             if result is None:

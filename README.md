@@ -303,7 +303,7 @@ To add a new environment to our framework:
        - max_workers: 128 # If parallel_friendly=True, max_workers threads will be used.
        - env_config: {}  # Configuration options from config.py
    ```
-   (Hint: Due to the extra time cost associated with using a thread pool, there is a trade-off between the pool's overhead and the speed of the environment itself. It is recommended to enable the parallelism only for complex environments.)
+   (Hint: Due to the extra time cost associated with using a thread pool, there is a trade-off between the pool's overhead and the speed of the environment itself. It is recommended to enable the parallelism only for complex environments. Meanwhile, running the RNG-dependent environments inside shared thread pools means multiple workers touch Python’s global random state concurrently, so even with the same seed, interleaving differs per run when setting `parallel_friendly=True`.)
 
 4. Add the environment tag to the `es_manager` section in `config/base.yaml`
 
