@@ -3,6 +3,7 @@ This is the environment state manager for the LLM agent.
 author: Pingyue Zhang
 date: 2025-03-30
 """
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Union
 import PIL.Image
@@ -73,8 +74,11 @@ class EnvStateManager:
                 else:
                     env_config = REGISTERED_ENV_CONFIGS[env_class](**cfg_template.env_config)
                 env_obj = REGISTERED_ENVS[env_class](env_config)
+                parallel_friendly = bool(getattr(cfg_template, "parallel_friendly", False))
+                max_workers = int(getattr(cfg_template, "max_workers", 1) or 1)
                 entry = {'tag': tag, 'group_id': env_id // self.group_size, 'env_id': env_id, 
-                        'env': env_obj, 'config': env_config, 'status': EnvStatus(), 'max_actions_per_traj': max_actions_per_traj}
+                        'env': env_obj, 'config': env_config, 'status': EnvStatus(), 'max_actions_per_traj': max_actions_per_traj,
+                        'parallel_friendly': parallel_friendly, 'max_workers': max_workers}
                 env_list.append(entry)
             done_groups += n_group
         return env_list
@@ -105,13 +109,34 @@ class EnvStateManager:
             if self.mode == "train" and self.base_seed is not None:
                 self.seed_counter = seed - self.base_seed + 1
         seeds = _expand_seed(seed)
-        for seed, entry in zip(seeds, envs):
-            entry['env'].reset(seed=seed, mode=self.mode)
-            entry['status'] = EnvStatus(seed=seed)
+
+        def _reset_single(entry, single_seed):
+            entry['env'].reset(seed=single_seed, mode=self.mode)
+            entry['status'] = EnvStatus(seed=single_seed)
+            return entry['env_id'], self._handle_mm_state(entry['env'].render())
+
+        reset_results = {}
+        tag2entries: Dict[str, List[tuple]] = {}
+        for single_seed, entry in zip(seeds, envs):
+            tag2entries.setdefault(entry['tag'], []).append((entry, single_seed))
+
+        for tag, items in tag2entries.items():
+            parallel_friendly = items[0][0].get('parallel_friendly', False)
+            max_workers = items[0][0].get('max_workers', 1)
+            if (not parallel_friendly) or max_workers <= 1 or len(items) == 1:
+                for entry, single_seed in items:
+                    env_id, next_state = _reset_single(entry, single_seed)
+                    reset_results[env_id] = next_state
+            else:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = [executor.submit(_reset_single, entry, single_seed) for entry, single_seed in items]
+                    for future in futures:
+                        env_id, next_state = future.result()
+                        reset_results[env_id] = next_state
 
         # update rollout cache
         for cache, env in zip(rollout_cache, envs):
-            next_state = self._handle_mm_state(env['env'].render())
+            next_state = reset_results[env['env_id']]
             cache['history'] = self._update_cache_history(cache['history'], next_state=next_state, actions_left=env['max_actions_per_traj'], num_actions_info=None)
             
         self.rollout_cache = rollout_cache
@@ -161,7 +186,7 @@ class EnvStateManager:
         envs = self.envs
         env_outputs = []
 
-        for env_input in all_env_inputs:
+        def _process_env_input(env_input: Dict) -> Dict:
             acc_reward, turn_info, turn_done = 0, {}, False
             entry = envs[env_input['env_id']]
             env_id, env = entry['env_id'], entry['env']
@@ -170,17 +195,53 @@ class EnvStateManager:
             # execute actions in envs
             valid_actions = self._extract_map_valid_actions(entry, env_input['actions'])
             acc_reward, turn_info, turn_done, executed_actions = _execute_actions(env, valid_actions[:actions_left_before])
+            penalty_delta = 0.0
             if len(valid_actions) != len(env_input['actions']) or not valid_actions:
-                self.rollout_cache[env_id]["penalty"] += self.sys_config.es_manager.format_penalty
-                
+                penalty_delta = self.sys_config.es_manager.format_penalty
+
             status, history = _log_env_state(entry['status'], self.rollout_cache[env_id]['history'], entry['env'].render(), entry['max_actions_per_traj'], executed_actions, valid_actions, acc_reward, turn_done, turn_info, env_input)
-            entry['status'] = status
-            if entry['status'].num_actions >= entry['max_actions_per_traj'] and not turn_done:
-                entry['status'].truncated = True
-                entry['status'].terminated = True
+            if status.num_actions >= entry['max_actions_per_traj'] and not turn_done:
+                status.truncated = True
+                status.terminated = True
                 turn_done = True
-            self.rollout_cache[env_id]['history'] = history
-            if not turn_done: # NOTE done environments are not sent for further llm generation (for efficiency)
+
+            return {
+                'env_id': env_id,
+                'status': status,
+                'history': history,
+                'turn_done': turn_done,
+                'penalty_delta': penalty_delta,
+            }
+
+        results: List[Optional[Dict]] = [None] * len(all_env_inputs)
+        tag2items: Dict[str, List[tuple]] = {}
+        for idx, env_input in enumerate(all_env_inputs):
+            entry = envs[env_input['env_id']]
+            tag2items.setdefault(entry['tag'], []).append((idx, env_input))
+
+        for tag, items in tag2items.items():
+            sample_entry = envs[items[0][1]['env_id']]
+            parallel_friendly = sample_entry.get('parallel_friendly', False)
+            max_workers = sample_entry.get('max_workers', 1)
+            if (not parallel_friendly) or max_workers <= 1 or len(items) == 1:
+                for idx, env_input in items:
+                    results[idx] = _process_env_input(env_input)
+            else:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(_process_env_input, env_input): idx for idx, env_input in items}
+                    for future, idx in futures.items():
+                        results[idx] = future.result()
+
+        for result in results:
+            if result is None:
+                continue
+            env_id = result['env_id']
+            entry = envs[env_id]
+            if result['penalty_delta']:
+                self.rollout_cache[env_id]["penalty"] += result['penalty_delta']
+            self.rollout_cache[env_id]['history'] = result['history']
+            entry['status'] = result['status']
+            if not result['turn_done']:
                 env_outputs.append(self.rollout_cache[env_id])
 
         return env_outputs
