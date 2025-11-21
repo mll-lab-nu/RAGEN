@@ -10,8 +10,8 @@ from .frozen_lake.config import FrozenLakeEnvConfig
 from .frozen_lake.env import FrozenLakeEnv
 from .metamathqa.env import MetaMathQAEnv
 from .metamathqa.config import MetaMathQAEnvConfig
-from .lean.config import LeanEnvConfig
-from .lean.env import LeanEnv
+# from .lean.config import LeanEnvConfig
+# from .lean.env import LeanEnv
 from .spatial.env_config import SpatialGymConfig
 from .spatial.env import SpatialGym
 
@@ -23,7 +23,7 @@ REGISTERED_ENVS = {
     'frozen_lake': FrozenLakeEnv,
     # 'alfworld': AlfredTXTEnv,
     'metamathqa': MetaMathQAEnv,
-    'lean': LeanEnv,
+    # 'lean': LeanEnv,
     'spatial': SpatialGym,
 }
 
@@ -34,7 +34,7 @@ REGISTERED_ENV_CONFIGS = {
     'frozen_lake': FrozenLakeEnvConfig,
     # 'alfworld': AlfredEnvConfig,
     'metamathqa': MetaMathQAEnvConfig,
-    'lean': LeanEnvConfig,
+    # 'lean': LeanEnvConfig,
     'spatial': SpatialGymConfig,
 }
 

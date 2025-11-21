@@ -5,8 +5,8 @@ import os
 import json
 import numpy as np
 
-from vagen.env.base.base_env_config import BaseEnvConfig
-from vagen.env.spatial.Base.tos_base.evaluation.task_types import EvalTaskType
+from ragen.env.base.base_env_config import BaseEnvConfig
+from ragen.env.spatial.Base.tos_base.evaluation.task_types import EvalTaskType
 
 
 @dataclass
@@ -31,7 +31,7 @@ class SpatialGymConfig(BaseEnvConfig):
 
     # Environment specific configuration
     name: str = 'unnamed_env'
-    render_mode: str = field(default="vision")
+    render_mode: str = field(default="text")
 
     # Room configuration (minimal additions from RAGEN)
     room_size: List[int] = field(default_factory=lambda: [10, 10])
@@ -49,15 +49,18 @@ class SpatialGymConfig(BaseEnvConfig):
     kwargs: Dict = None
     proxy_agent: str = 'scout'
     # Evaluation configuration
-    # Each eval task entry supports {task_type, task_kwargs}
-    eval_tasks: List[Dict[str, Any]] = field(default_factory=lambda: [{"task_type": "rot", "task_kwargs": {}}])
+    # List of evaluation task names (short names)
+    eval_tasks: List[str] = field(default_factory=lambda: [
+        "dir", "rot", "rot_dual", "pov", "bwd_pov", 
+        "e2a", "fwd_loc", "bwd_loc", "fwd_fov", "bwd_nav"
+    ])
 
     prompt_config: Dict[str, Any] = field(default_factory=lambda: {"topdown": False, "oblique": False, "type": "shorter"})
 
     calculate_information_gain: bool = False
 
     def config_id(self) -> str:
-        eval_task_str = ", ".join([f"{task['task_type']}" for task in self.eval_tasks])
+        eval_task_str = ", ".join(self.eval_tasks)
         return f"SpatialGymConfig(mode={self.render_mode},format={self.prompt_format},eval_tasks={eval_task_str})"
 
     def generate_seeds(self, size, seed=0, n_candidate = 20000):
@@ -77,6 +80,7 @@ class SpatialGymConfig(BaseEnvConfig):
         self._validate_exp_type()
         self._validate_field_of_view()
         self._validate_eval_tasks()
+        assert self.render_mode == 'text', "Only text render mode is supported in RAGEN"
 
     def _validate_exp_type(self):
         """Validate exp_type parameter."""
@@ -91,28 +95,21 @@ class SpatialGymConfig(BaseEnvConfig):
     def _validate_eval_tasks(self):
         """Validate eval_tasks parameter."""
         valid_eval_tasks = EvalTaskType.get_short_names()
-        assert len(self.eval_tasks) == 1, "Only one evaluation task is supported"
-
+        
         if isinstance(self.eval_tasks, ListConfig):
             self.eval_tasks = OmegaConf.to_container(self.eval_tasks, resolve=True)
 
         if isinstance(self.eval_tasks, np.ndarray):
             self.eval_tasks = self.eval_tasks.tolist()
 
-
         if not self.eval_tasks:
             raise ValueError("eval_tasks must be non-empty")
 
-        for i, task in enumerate(self.eval_tasks):
-            if not isinstance(task, dict) or 'task_type' not in task:
-                raise ValueError("Each eval_task must be a dict with 'task_type' key")
-
-            task_type = task['task_type']
-            if task_type not in valid_eval_tasks:
-                raise ValueError(f"task_type '{task_type}' must be one of {valid_eval_tasks}")
-            # validate task_kwargs if present
-            if 'task_kwargs' in task and task['task_kwargs'] is not None:
-                assert isinstance(task['task_kwargs'], dict), "task_kwargs must be a dict"
+        for task_name in self.eval_tasks:
+            if not isinstance(task_name, str):
+                raise ValueError(f"eval_tasks must be a list of strings, got {type(task_name)}")
+            if task_name not in valid_eval_tasks:
+                raise ValueError(f"task_type '{task_name}' must be one of {valid_eval_tasks}")
 
     def get_room_config(self) -> Dict[str, Any]:
         """Get configuration for room generation (updated from RAGEN)."""
@@ -139,12 +136,12 @@ class SpatialGymConfig(BaseEnvConfig):
         # Specific config (spatial-specific parameters)
         specific_config = {
             'name': self.name,
-            'room_size': self.room_size,  # New from RAGEN
-            'n_objects': self.n_objects,  # New from RAGEN
-            'level': self.level,  # New from RAGEN
-            'main': self.main,  # New from RAGEN
+            'room_size': self.room_size,
+            'n_objects': self.n_objects,
+            'level': self.level,
+            'main': self.main,
             'exp_type': self.exp_type,
-            'perspective': self.perspective,  # VAGEN specific
+            'perspective': self.perspective,
             'eval_tasks': self.eval_tasks,
             'max_exp_steps': self.max_exp_steps,
             'calculate_information_gain': self.calculate_information_gain,
