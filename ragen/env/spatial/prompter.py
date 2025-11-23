@@ -6,7 +6,7 @@ from ragen.env.spatial.Base.tos_base.utils.room_utils import get_room_descriptio
 from ragen.env.spatial.Base.tos_base.core.relationship import (
     PairwiseRelationship, PairwiseRelationshipDiscrete, ProximityRelationship, DegreeRel, OrientationRel
 )
-from ragen.env.spatial.Base.tos_base.prompts.prompts import (
+from .prompts import (
     INSTRUCTION_TEMPLATE_TEXT, SHARED_INTRO_TEXT,
     SHARED_MULTIROOM_RULES, SHARED_RULES_COMMON, ACTIVE_RULES_EXTRA
 )

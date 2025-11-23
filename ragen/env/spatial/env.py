@@ -14,6 +14,7 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
     def __init__(self, config: SpatialGymConfig = None):
         super().__init__()
         self.config = config or SpatialGymConfig()
+        print(f"Config: {self.config}")
         self.render_mode = self.config.render_mode
         # User requirement: max steps should be 1 step more than max exp steps
         self.max_steps = self.config.max_exp_steps + 1
@@ -28,8 +29,8 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
         self.exploration_manager = None
         self.prompter = SpatialPrompter(self.config, np.random.RandomState(42))
 
-    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> str:
-        gym.Env.reset(self, seed=seed, options=options) # Sets self.np_random
+    def reset(self, seed: Optional[int] = None, mode=None) -> str:
+        gym.Env.reset(self, seed=seed) # Sets self.np_random
         
         self.prompter.np_random = self.np_random
         
@@ -136,7 +137,7 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
         self.last_info = info
         return obs, reward, done, info
 
-    def render(self):
+    def render(self, mode=None):
         return self.last_obs
         
     def close(self):
@@ -153,12 +154,12 @@ if __name__ == "__main__":
     RoomPlotter.plot(env.room, env.agent, mode='img', save_path='room.png')
     
     # Test a few steps
-    print("\nStep 1: Move Forward")
-    obs, reward, done, info = env.step("Actions: [Rotate(180), Observe()]")
+    print("\nStep 1: Rotate and Observe")
+    obs, reward, done, info = env.step("Actions: [Rotate(90), Observe()]")
     print(f"Reward: {reward}, Done: {done}, Info: {info}, Obs: {obs}")
     
-    print("\nStep 2: Observe")
-    obs, reward, done, info = env.step("Actions: [JumpTo(computer), Observe()]")
+    print("\nStep 2: Jump to red door and Observe")
+    obs, reward, done, info = env.step("Actions: [JumpTo(red door), Observe()]")
     print(f"Reward: {reward}, Done: {done}, Info: {info}, Obs: {obs}")
     
     print("\nStep 3: Terminate with answer")
