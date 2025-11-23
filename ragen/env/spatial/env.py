@@ -1,34 +1,35 @@
 import gymnasium as gym
 import numpy as np
 from typing import Any, Dict, Tuple, Optional, List
-import os
 
 from ragen.env.base import BaseLanguageBasedEnv
-from ragen.env.spatial.env_config import SpatialGymConfig
+from ragen.env.spatial.config import SpatialGymConfig
 from ragen.env.spatial.Base.tos_base.utils.room_utils import RoomGenerator
-from ragen.env.spatial.Base.tos_base.actions.actions import ActionSequence, TermAction, ObserveAction, MoveAction, ActionResult
+from ragen.env.spatial.Base.tos_base.actions.actions import ActionSequence
 from ragen.env.spatial.Base.tos_base.evaluation.task_types import EvalTaskType
 from ragen.env.spatial.Base.tos_base.managers.exploration_manager import ExplorationManager
 from ragen.env.spatial.prompter import SpatialPrompter
 
-class SpatialGym(BaseLanguageBasedEnv):
+class SpatialGym(BaseLanguageBasedEnv, gym.Env):
     def __init__(self, config: SpatialGymConfig = None):
         super().__init__()
         self.config = config or SpatialGymConfig()
+        self.render_mode = self.config.render_mode
+        # User requirement: max steps should be 1 step more than max exp steps
+        self.max_steps = self.config.max_exp_steps + 1
+        
         self.room = None
         self.agent = None
         self.current_answer = None
-        self.render_mode = self.config.render_mode
-        self.max_steps = self.config.max_exp_steps
         self.current_step_count = 0
         self.last_obs = ""
         self.last_info = {}
         
         self.exploration_manager = None
-        self.prompter = SpatialPrompter(self.config, np.random.RandomState(42)) # Seed updated in reset
+        self.prompter = SpatialPrompter(self.config, np.random.RandomState(42))
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> str:
-        super().reset(seed=seed) # Sets self.np_random
+        gym.Env.reset(self, seed=seed, options=options) # Sets self.np_random
         
         self.prompter.np_random = self.np_random
         
@@ -42,7 +43,8 @@ class SpatialGym(BaseLanguageBasedEnv):
             np_random=self.np_random,
             level=self.config.level,
             main=self.config.main,
-            eval_tasks=eval_tasks_dicts
+            eval_tasks=eval_tasks_dicts,
+            same_room_size=True
         )
         
         # Initialize ExplorationManager
@@ -82,32 +84,28 @@ class SpatialGym(BaseLanguageBasedEnv):
         # Parse action
         seq = ActionSequence.parse(action)
         if seq is None:
-            reward = -1.0
-            done = False
-            info = {"error": "Invalid action format", "success": False}
-            obs = "Invalid action format. Please follow the grammar."
-            self.last_obs = obs
-            return obs, reward, done, info
+            return self._step_result(
+                obs="Invalid action format. Please follow the grammar.",
+                reward=-1.0,
+                done=False,
+                info={"error": "Invalid action format", "success": False}
+            )
             
-        # Execute actions using ExplorationManager
-        # It handles observed_items, failure fallback to Observe, etc.
+        # Execute actions
         results = self.exploration_manager.execute_action_sequence(seq)
-        
-        feedback_list = [res.feedback for res in results]
+        feedback_list = [res.message for res in results]
         
         terminated = False
         term_answer = None
         
-        # Check for TermAction in results (should be the last one if present and successful)
-        # Note: ExplorationManager might execute Observe if motion fails, so check all or last.
-        # If TermAction was executed, it means motions succeeded (or there were none).
+        # Check for TermAction
         for res in results:
             if res.success and res.action_type == 'term':
                 terminated = True
                 term_answer = res.data.get('answer')
                 break
 
-        # Calculate reward
+        # Calculate reward and done
         reward = -0.1
         done = False
         info = {}
@@ -127,31 +125,43 @@ class SpatialGym(BaseLanguageBasedEnv):
             done = True
             
         obs = "\n".join(feedback_list)
-        
         if not done:
-            obs += "\n" + self.prompter.get_format_footer(is_exploration=True)
+            remaining_exp_steps = max(0, self.config.max_exp_steps - self.current_step_count)
+            obs += f"\nYou have a maximum of {remaining_exp_steps} exploration steps left."
             
+        return self._step_result(obs, reward, done, info)
+
+    def _step_result(self, obs, reward, done, info):
         self.last_obs = obs
         self.last_info = info
-        
         return obs, reward, done, info
 
     def render(self):
         return self.last_obs
+        
+    def close(self):
+        pass
 
 if __name__ == "__main__":
-    env = SpatialGym()
+    config = SpatialGymConfig(room_size=[20, 20], n_objects=10, level=1, main=6)
+    env = SpatialGym(config)
     obs = env.reset(seed=42)
     print("Initial Observation:")
     print(obs)
+
     from ragen.env.spatial.Base.tos_base.utils.room_utils import RoomPlotter
-    RoomPlotter.plot_room(env.room, mode='vision', save_path='room.png')
+    RoomPlotter.plot(env.room, env.agent, mode='img', save_path='room.png')
     
     # Test a few steps
     print("\nStep 1: Move Forward")
-    obs, reward, done, info = env.step("move(forward)")
-    print(f"Obs: {obs}")
+    obs, reward, done, info = env.step("Actions: [Rotate(180), Observe()]")
+    print(f"Reward: {reward}, Done: {done}, Info: {info}, Obs: {obs}")
     
-    print("\nStep 2: Terminate with wrong answer")
-    obs, reward, done, info = env.step("term(yes)")
-    print(f"Reward: {reward}, Done: {done}, Info: {info}")
+    print("\nStep 2: Observe")
+    obs, reward, done, info = env.step("Actions: [JumpTo(computer), Observe()]")
+    print(f"Reward: {reward}, Done: {done}, Info: {info}, Obs: {obs}")
+    
+    print("\nStep 3: Terminate with answer")
+    obs, reward, done, info = env.step("Actions: [Term(C)]")
+    print(f"Reward: {reward}, Done: {done}, Info: {info}, Obs: {obs}")
+    

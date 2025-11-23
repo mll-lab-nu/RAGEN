@@ -12,7 +12,7 @@ from .metamathqa.env import MetaMathQAEnv
 from .metamathqa.config import MetaMathQAEnvConfig
 # from .lean.config import LeanEnvConfig
 # from .lean.env import LeanEnv
-from .spatial.env_config import SpatialGymConfig
+from .spatial.config import SpatialGymConfig
 from .spatial.env import SpatialGym
 
 

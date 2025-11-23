@@ -53,6 +53,9 @@ main() {
     eval "$(conda shell.bash hook)"
     conda activate ragen
 
+    pip install -U pip setuptools wheel
+    pip install numpy ninja packaging psutil
+
     # Install package in editable mode
     print_step "setting up verl..."
     git submodule init

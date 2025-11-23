@@ -54,7 +54,7 @@ class SpatialPrompter(Prompter):
             'title': 'Spatial Exploration Task',
             'intro': SHARED_INTRO_TEXT,
             'goal_lines': goal_lines,
-            'format_rules': self._build_format_rules(is_exploration=True), # Use exploration format (Actions: [...])
+            'format_rules': "", # No format rules
             'observation_instructions': observation_instructions,
             'exp_instructions': exp_instructions,
             'room_info': room_desc,
@@ -70,5 +70,5 @@ class SpatialPrompter(Prompter):
         if question:
              obs_str += f"\n## Evaluation Question\n{question}"
 
-        obs['obs_str'] = obs_str + "\n" + self.get_format_footer(is_exploration=True)
+        obs['obs_str'] = obs_str
         return obs
