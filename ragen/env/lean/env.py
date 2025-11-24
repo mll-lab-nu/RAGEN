@@ -7,9 +7,16 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
-from kimina_client import Infotree, Snippet
-from kimina_client.models import CheckResponse, CommandResponse, Error, ReplResponse
-from kimina_client.sync_client import KiminaClient
+try:
+    from kimina_client import Infotree, Snippet
+    from kimina_client.models import CheckResponse, CommandResponse, Error, ReplResponse
+    from kimina_client.sync_client import KiminaClient
+except ImportError:
+    Infotree = Snippet = None
+    CheckResponse = CommandResponse = Error = ReplResponse = None
+    KiminaClient = None
+    print("WARNING: kimina-client is not installed or failed to import. Lean environments will not be loaded.")
+
 
 from ragen.env.base import BaseLanguageBasedEnv
 
