@@ -1,0 +1,11 @@
+defaults:
+  - base
+ 
+trainer:
+  experiment_name: sokoban-main-multiturn
+
+es_manager:
+  render_multi_actions: True
+
+
+

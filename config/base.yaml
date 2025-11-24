@@ -117,6 +117,7 @@ agent_proxy:
     method: "identity" # asym_clip / identity / mean_std
 
 es_manager:
+  render_multi_actions: False # if True, when there's multi actions in a turn, will render each interim state and reward.
   format_penalty: -0.1
   train:
     env_groups: 8

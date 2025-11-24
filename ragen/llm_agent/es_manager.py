@@ -180,29 +180,53 @@ class EnvStateManager:
         env_outputs: List[Dict]
             {env_id: int, history: List[Dict][{state: str, actions: List[str], reward: float, info: Dict, llm_response: str, llm_raw_response: str, (Optional)images: List[PIL.Image.Image]}]}
         """
+        def _render_next_state(all_actions, all_obs, all_rewards):
+            """Render multiple actions with observations and rewards for each step."""
+            lines = []
+            if len(all_actions) > 1:
+                lines.append("You made one or more actions. Here are the observations and rewards after each action:")
+            else:
+                lines.append("You made an action.")
+            
+            for action, obs, reward in zip(all_actions, all_obs, all_rewards):
+                lines.append(f"Action: {action}")
+                lines.append(f"Observation: {obs}")
+                lines.append(f"Reward: {reward}")
+            
+            return "\n".join(lines)
+
         def _execute_actions(env, actions):
             acc_reward, turn_info, turn_done = 0, {}, False
             executed_actions = []
+            all_obs = []
+            all_rewards = []
+            next_state = ""
             for action in actions:
-                _, reward, done, info = env.step(action)
+                obs, reward, done, info = env.step(action)
                 acc_reward += reward
                 turn_info.update(info) # NOTE: currently use last info for multi-action
                 executed_actions.append(action)
+                all_obs.append(obs)
+                all_rewards.append(reward)
                 if done:
                     turn_done = True
                     break
+            if self.sys_config.es_manager.render_multi_actions:
+                # TODO: support multimodal state rendering for multi-action
+                next_state = _render_next_state(executed_actions, all_obs, all_rewards)
+            else:
+                next_state = self._handle_mm_state(obs)
             
-            return acc_reward, turn_info, turn_done, executed_actions
+            return next_state, acc_reward, turn_info, turn_done, executed_actions
 
-        def _log_env_state(status, history, cur_obs, max_actions_per_traj, executed_actions, all_actions, acc_reward, turn_done, turn_info, env_input):
-            obs = self._handle_mm_state(cur_obs)
+        def _log_env_state(status, history, next_state, max_actions_per_traj, executed_actions, all_actions, acc_reward, turn_done, turn_info, env_input):
             status.num_actions += len(executed_actions)
             status.rewards.append(acc_reward) # NOTE use turn-wise acc_reward
             actions_left = max_actions_per_traj - status.num_actions
             if turn_done:
                 status.terminated = True # TODO check terminated definition in gymnasium
                 status.truncated = not turn_info.get('success', False)
-            history = self._update_cache_history(history, next_state=obs, actions_left=actions_left, num_actions_info={
+            history = self._update_cache_history(history, next_state=next_state, actions_left=actions_left, num_actions_info={
                 'actions': executed_actions, 'reward': acc_reward, 'info': turn_info,
                 'llm_response': env_input['llm_response'], 'llm_raw_response': env_input['llm_raw_response']
             })
@@ -221,12 +245,12 @@ class EnvStateManager:
 
             # execute actions in envs
             valid_actions = self._extract_map_valid_actions(entry, env_input['actions'])
-            acc_reward, turn_info, turn_done, executed_actions = _execute_actions(env, valid_actions[:actions_left_before])
+            next_state, acc_reward, turn_info, turn_done, executed_actions = _execute_actions(env, valid_actions[:actions_left_before])
             penalty_delta = 0.0
             if len(valid_actions) != len(env_input['actions']) or not valid_actions:
                 penalty_delta = self.sys_config.es_manager.format_penalty
 
-            status, history = _log_env_state(entry['status'], self.rollout_cache[env_id]['history'], entry['env'].render(), entry['max_actions_per_traj'], executed_actions, valid_actions, acc_reward, turn_done, turn_info, env_input)
+            status, history = _log_env_state(entry['status'], self.rollout_cache[env_id]['history'], next_state, entry['max_actions_per_traj'], executed_actions, valid_actions, acc_reward, turn_done, turn_info, env_input)
             if status.num_actions >= entry['max_actions_per_traj'] and not turn_done:
                 status.truncated = True
                 status.terminated = True
