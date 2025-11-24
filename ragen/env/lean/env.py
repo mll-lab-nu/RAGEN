@@ -49,6 +49,11 @@ class LeanEnv(BaseLanguageBasedEnv):
         client: Optional[KiminaClient] = None,
     ):
         super().__init__()
+        if KiminaClient is None:
+            raise ImportError(
+                "kimina-client is required for LeanEnv but is not installed. "
+                "Please install it with: pip install kimina-client"
+            )
         self.config = config if config is not None else LeanEnvConfig()
         self._client = client
         self._server_url = self.config.server_url.rstrip("/")
