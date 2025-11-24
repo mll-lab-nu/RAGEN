@@ -572,16 +572,17 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 # generate a batch
                 with marked_timer("gen", timing_raw):
                     batch = self.agent_proxy.rollout(batch, val=False)
-                                        # Adjust batch size to be divisible by num_groups (for rollout_filter) and ppo_mini_batch_size
+
+                    # Filter first, then adjust batch size
+                    batch, metrics = self.rollout_filter.filter(batch)
+
+                    # Adjust batch size to be divisible by num_groups, ppo_mini_batch_size, and n_gpus
                     num_groups = self.config.es_manager.train.env_groups
                     ppo_mini_batch_size = self.config.actor_rollout_ref.actor.ppo_mini_batch_size
-                    # Use LCM of num_groups and ppo_mini_batch_size
-                    size_divisor = np.lcm(num_groups, ppo_mini_batch_size)
+                    n_gpus = self.config.trainer.n_gpus_per_node
+                    size_divisor = np.lcm.reduce([num_groups, ppo_mini_batch_size, n_gpus])
                     adjust_mode = getattr(self.config.agent_proxy, "batch_adjust_mode", "copy")
                     batch = adjust_batch(batch, size_divisor, mode=adjust_mode)
-
-                    # TODO: Need to check if without history mode is compatible with rollout filter
-                    batch, metrics = self.rollout_filter.filter(batch)
                     metrics.update({"train/" + key: value for key, value in batch.meta_info["metrics"].items()})
 
                     inputs, outputs, scores = _process_batch_for_logging(batch)
