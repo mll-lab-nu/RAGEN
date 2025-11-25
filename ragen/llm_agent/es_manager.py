@@ -194,8 +194,8 @@ class EnvStateManager:
                 lines.append("You made an action.")
             
             for action, obs, reward in zip(all_actions, all_obs, all_rewards):
-                lines.append(f"Action: {_action_to_text(action)}")
-                lines.append(f"Observation: {obs}")
+                lines.append(f"Action: [ACTION_START]{_action_to_text(action)}[ACTION_END]")
+                lines.append(f"Observation: [OBSERVATION_START]{obs}[OBSERVATION_END]")
                 lines.append(f"Reward: {reward}")
             
             return "\n".join(lines)
