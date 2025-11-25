@@ -180,8 +180,13 @@ class EnvStateManager:
         env_outputs: List[Dict]
             {env_id: int, history: List[Dict][{state: str, actions: List[str], reward: float, info: Dict, llm_response: str, llm_raw_response: str, (Optional)images: List[PIL.Image.Image]}]}
         """
-        def _render_next_state(all_actions, all_obs, all_rewards):
+        def _render_next_state(all_actions, all_obs, all_rewards, action_lookup=None):
             """Render multiple actions with observations and rewards for each step."""
+            def _action_to_text(action):
+                if action_lookup and action in action_lookup:
+                    return action_lookup[action]
+                return str(action)
+
             lines = []
             if len(all_actions) > 1:
                 lines.append("You made one or more actions. Here are the observations and rewards after each action:")
@@ -189,7 +194,7 @@ class EnvStateManager:
                 lines.append("You made an action.")
             
             for action, obs, reward in zip(all_actions, all_obs, all_rewards):
-                lines.append(f"Action: {action}")
+                lines.append(f"Action: {_action_to_text(action)}")
                 lines.append(f"Observation: {obs}")
                 lines.append(f"Reward: {reward}")
             
@@ -213,7 +218,8 @@ class EnvStateManager:
                     break
             if self.sys_config.es_manager.render_multi_actions:
                 # TODO: support multimodal state rendering for multi-action
-                next_state = _render_next_state(executed_actions, all_obs, all_rewards)
+                action_lookup = getattr(env.config, "action_lookup", None)
+                next_state = _render_next_state(executed_actions, all_obs, all_rewards, action_lookup)
             else:
                 next_state = self._handle_mm_state(obs)
             
