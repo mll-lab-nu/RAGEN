@@ -19,57 +19,10 @@ maybe_flush() {
   fi
 }
 
-init_singleton() {
-  local tag=${1:-$(basename "$0")}
-  local dir="/blob/v-zihanwang/tmp"
-  mkdir -p "$dir"
-  export SGL_FILE="${dir}/${tag}.lock"
-
-  local ts
-  ts=$(date +%s)
-
-  if [[ -f "$SGL_FILE" ]]; then
-    local last_modified
-    last_modified=$(stat -c %Y "$SGL_FILE")
-    if (( ts - last_modified < 60 )); then
-      echo "[singleton] newer process already active (lock updated $(date -d @$last_modified)). exiting."
-      exit 0
-    fi
-  fi
-
-  echo "$ts" > "$SGL_FILE"
-  touch -d "@$ts" "$SGL_FILE"
-
-  export SGL_TS="$ts"
-
-  echo "[singleton] init: file=$SGL_FILE ts=$SGL_TS"
-}
-
-check_singleton() {
-  if [[ -z "${SGL_FILE:-}" || -z "${SGL_TS:-}" ]]; then
-    echo "[singleton] check: env not initialized (SGL_FILE/SGL_TS empty) -> exiting."
-    exit 0
-  fi
-
-  if [[ ! -f "$SGL_FILE" ]]; then
-    echo "[singleton] check: lock file missing -> taken over by another script. exiting."
-    exit 0
-  fi
-
-  local mtime
-  mtime=$(stat -c %Y "$SGL_FILE" 2>/dev/null || echo 0)
-
-  if [[ "$mtime" != "$SGL_TS" ]]; then
-    echo "[singleton] check: lock updated (was $SGL_TS, now $mtime). exiting."
-    exit 0
-  fi
-}
-
-wait_sleep_reset_check() {
+wait_sleep_reset() {
   wait
   sleep 15
   gpu_idx=0
-  check_singleton
 }
 
 launch_webshop_s() {
@@ -150,16 +103,14 @@ entvar_filter_overrides=(
   "actor_rollout_ref.rollout.rollout_filter_metric=entropy_variance"
 )
 
-init_singleton "$(basename "${BASH_SOURCE[0]}")"
 launch_webshop_s "webshop_3b_base_ppo_think_s_entvarfilter" 8 400 "${entvar_filter_overrides[@]}"
-wait_sleep_reset_check
+wait_sleep_reset
 
 # launch_webshop_s "webshop_3b_base_ppo_think_s" 8 400
-# wait_sleep_reset_check
+# wait_sleep_reset
 
 # launch_webshop_s "webshop_3b_base_ppo_think_s_entropyfilter" 8 400 "${entropy_filter_overrides[@]}"
-# wait_sleep_reset_check
+# wait_sleep_reset
 
 # launch_webshop_s "webshop_3b_base_ppo_think_s_klcoef0.001" 8 400 "${kl_coef_overrides[@]}"
-# wait_sleep_reset_check
-
+# wait_sleep_reset

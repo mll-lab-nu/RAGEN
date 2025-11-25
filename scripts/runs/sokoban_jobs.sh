@@ -19,57 +19,10 @@ maybe_flush() {
   fi
 }
 
-init_singleton() {
-  local tag=${1:-$(basename "$0")}
-  local dir="/blob/v-zihanwang/tmp"
-  mkdir -p "$dir"
-  export SGL_FILE="${dir}/${tag}.lock"
-
-  local ts
-  ts=$(date +%s)
-
-  if [[ -f "$SGL_FILE" ]]; then
-    local last_modified
-    last_modified=$(stat -c %Y "$SGL_FILE")
-    if (( ts - last_modified < 60 )); then
-      echo "[singleton] newer process already active (lock updated $(date -d @$last_modified)). exiting."
-      exit 0
-    fi
-  fi
-
-  echo "$ts" > "$SGL_FILE"
-  touch -d "@$ts" "$SGL_FILE"
-
-  export SGL_TS="$ts"
-
-  echo "[singleton] init: file=$SGL_FILE ts=$SGL_TS"
-}
-
-check_singleton() {
-  if [[ -z "${SGL_FILE:-}" || -z "${SGL_TS:-}" ]]; then
-    echo "[singleton] check: env not initialized (SGL_FILE/SGL_TS empty) -> exiting."
-    exit 0
-  fi
-
-  if [[ ! -f "$SGL_FILE" ]]; then
-    echo "[singleton] check: lock file missing -> taken over by another script. exiting."
-    exit 0
-  fi
-
-  local mtime
-  mtime=$(stat -c %Y "$SGL_FILE" 2>/dev/null || echo 0)
-
-  if [[ "$mtime" != "$SGL_TS" ]]; then
-    echo "[singleton] check: lock updated (was $SGL_TS, now $mtime). exiting."
-    exit 0
-  fi
-}
-
-wait_sleep_reset_check() {
+wait_sleep_reset() {
   wait
   sleep 15
   gpu_idx=0
-  check_singleton
 }
 
 launch_sokoban() {
@@ -201,26 +154,23 @@ lora_overrides=(
   "micro_batch_size_per_gpu=8"
 )
 
-init_singleton "$(basename "${BASH_SOURCE[0]}")"
-
 launch_sokoban "sokoban_coord_3b_base_ppo_think_s_entvarfilter" True ppo s 8 800 "${entvar_filter_overrides[@]}"
 
 # launch_sokoban "sokoban_coord_3b_base_ppo_think_normal" True ppo normal 4
 # launch_sokoban "sokoban_coord_3b_base_ppo_nothink_normal" False ppo normal 4
-# wait_sleep_reset_check
+# wait_sleep_reset
 
 # launch_sokoban "sokoban_coord_3b_base_ppo_think_det" True ppo det 4
 # launch_sokoban "sokoban_coord_3b_base_ppo_think_normal_lora" True ppo normal 4 "${lora_overrides[@]}"
-# wait_sleep_reset_check
+# wait_sleep_reset
 
 
 # launch_sokoban "sokoban_coord_3b_instruct_ppo_think_s" True ppo s 4 400 "${instruct_overrides[@]}"
 # launch_sokoban "sokoban_coord_3b_base_ppo_think_s_2" True ppo s 8 800
-# wait_sleep_reset_check
+# wait_sleep_reset
 
 
 # launch_sokoban "sokoban_coord_3b_base_ppo_think_s_klcoef0.001" True ppo s 4 400 "${kl_coef_overrides[@]}"
 # launch_sokoban "sokoban_coord_3b_base_ppo_think_s_entropyfilter" True ppo s 4 400 "${entropy_filter_overrides[@]}"
-# wait_sleep_reset_check
-
+# wait_sleep_reset
 
