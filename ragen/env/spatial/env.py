@@ -126,9 +126,7 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
             done = True
             
         obs = "\n".join(feedback_list)
-        if not done:
-            remaining_exp_steps = max(0, self.config.max_exp_steps - self.current_step_count)
-            obs += f"\nYou have a maximum of {remaining_exp_steps} exploration steps left."
+
             
         return self._step_result(obs, reward, done, info)
 
@@ -144,7 +142,7 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
         pass
 
 if __name__ == "__main__":
-    config = SpatialGymConfig(room_size=[20, 20], n_objects=10, level=1, main=6)
+    config = SpatialGymConfig(room_size=[20, 20], n_objects=5, level=0, main=6)
     env = SpatialGym(config)
     obs = env.reset(seed=42)
     print("Initial Observation:")

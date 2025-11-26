@@ -228,6 +228,6 @@ custom_envs:
     max_workers: 32
     env_config:
       room_size: [20, 20]
-      level: 1
-      n_objects: 8
+      level: 0
+      n_objects: 5
       main: 6

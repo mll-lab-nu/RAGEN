@@ -43,7 +43,7 @@ class SpatialPrompter(Prompter):
 
         # Always include action instructions (text only)
         exp_instructions = f"Action Instructions:\n{ActionSequence.get_usage_instructions(vision=False)}"
-        exp_instructions += f"\n\nYou have a maximum of {self.config.max_exp_steps} exploration steps."
+
 
         template = INSTRUCTION_TEMPLATE_TEXT
 
@@ -58,7 +58,7 @@ class SpatialPrompter(Prompter):
             'observation_instructions': observation_instructions,
             'exp_instructions': exp_instructions,
             'room_info': room_desc,
-            'multiroom_rules': SHARED_MULTIROOM_RULES,
+            'multiroom_rules': SHARED_MULTIROOM_RULES if self.config.level != 0 else "",
             'active_rules_extra': ACTIVE_RULES_EXTRA,
             'rules_common': SHARED_RULES_COMMON,
             'exp_history': "", # Initial prompt has no history
