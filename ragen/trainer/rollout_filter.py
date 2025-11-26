@@ -63,12 +63,14 @@ class RolloutFilter:
 
         return top_groups
 
-    def _groups_to_mask(self, top_groups: torch.Tensor) -> torch.Tensor:
+    def _groups_to_mask(self, top_groups: torch.Tensor, group_size: int = None) -> torch.Tensor:
         device = top_groups.device
+        if group_size is None:
+            group_size = self.group_size
         mask = torch.zeros(self.num_groups, dtype=torch.bool, device=device)
         if top_groups.numel() > 0:
             mask[top_groups] = True
-        mask = mask.unsqueeze(1).expand(-1, self.group_size).reshape(-1).cpu()
+        mask = mask.unsqueeze(1).expand(-1, group_size).reshape(-1).cpu()
         return mask
 
     def _apply_mask(self, batch: DataProto, mask: torch.Tensor) -> DataProto:
@@ -129,9 +131,48 @@ class RewardRolloutFilter(RolloutFilter):
 
     def filter(self, batch: DataProto) -> Tuple[DataProto, Dict[str, torch.Tensor]]:
         rollout_filter_ratio = self.ratio
-        num_groups, group_size = self.num_groups, self.group_size
+        num_groups = self.num_groups
 
-        rm_scores = batch.batch["original_rm_scores"].sum(dim=-1).view(num_groups, group_size)
+        # Check if this is without_history mode (has episode_ids)
+        has_episode_ids = (
+            batch.non_tensor_batch is not None
+            and "episode_ids" in batch.non_tensor_batch
+        )
+
+        if has_episode_ids:
+            # Without_history mode: aggregate by episode first
+            episode_ids = batch.non_tensor_batch["episode_ids"]
+            group_ids = batch.non_tensor_batch["group_ids"]
+            all_scores = batch.batch["original_rm_scores"].sum(dim=-1)
+
+            # Get unique episodes and their rewards
+            unique_episodes = []
+            episode_to_first_idx = {}
+            for i, eid in enumerate(episode_ids):
+                if eid not in episode_to_first_idx:
+                    unique_episodes.append(eid)
+                    episode_to_first_idx[eid] = i
+
+            # Get episode-level rewards and group_ids
+            num_episodes = len(unique_episodes)
+            episode_rewards = torch.zeros(num_episodes, device=all_scores.device)
+            episode_group_ids = []
+            for i, eid in enumerate(unique_episodes):
+                idx = episode_to_first_idx[eid]
+                episode_rewards[i] = all_scores[idx]
+                episode_group_ids.append(group_ids[idx])
+
+            # Calculate group_size as episodes per group
+            group_size = num_episodes // num_groups
+
+            # Reshape to (num_groups, group_size)
+            rm_scores = episode_rewards.view(num_groups, group_size)
+        else:
+            # Original mode: each sample is an episode
+            actual_batch_size = batch.batch["original_rm_scores"].shape[0]
+            group_size = actual_batch_size // num_groups
+            rm_scores = batch.batch["original_rm_scores"].sum(dim=-1).view(num_groups, group_size)
+
         in_group_std = rm_scores.std(dim=-1)
         in_group_max = rm_scores.max(dim=-1).values
         in_group_mean = rm_scores.mean(dim=-1)
@@ -154,7 +195,24 @@ class RewardRolloutFilter(RolloutFilter):
         if rollout_filter_ratio >= 1:
             return batch, metrics
 
-        mask = self._groups_to_mask(top_groups)
+        if has_episode_ids:
+            # Build mask for turn-level samples based on selected groups
+            # First, find which episodes belong to selected groups
+            selected_episodes = set()
+            for gid in top_groups.cpu().tolist():
+                start_ep = gid * group_size
+                end_ep = start_ep + group_size
+                for ep_idx in range(start_ep, end_ep):
+                    selected_episodes.add(unique_episodes[ep_idx])
+
+            # Build turn-level mask
+            mask = torch.tensor(
+                [episode_ids[i] in selected_episodes for i in range(len(episode_ids))],
+                dtype=torch.bool
+            )
+        else:
+            mask = self._groups_to_mask(top_groups, group_size)
+
         batch = self._apply_mask(batch, mask)
 
         return batch, metrics
@@ -186,6 +244,7 @@ class EntropyRolloutFilter(RolloutFilter):
 
     def filter(self, batch: DataProto) -> Tuple[DataProto, Dict[str, torch.Tensor]]:
         rollout_filter_ratio = self.ratio
+        num_groups = self.num_groups
 
         if "entropys" not in batch.batch:
             log_prob = self._compute_log_prob(batch)
@@ -202,8 +261,42 @@ class EntropyRolloutFilter(RolloutFilter):
         token_counts = loss_mask.sum(dim=-1).clamp(min=1)
         entropy_per_traj = (entropys * loss_mask).sum(dim=-1) / token_counts
 
-        num_groups, group_size = self.num_groups, self.group_size
-        entropy_per_group = entropy_per_traj.view(num_groups, group_size)
+        # Check if this is without_history mode (has episode_ids)
+        has_episode_ids = (
+            batch.non_tensor_batch is not None
+            and "episode_ids" in batch.non_tensor_batch
+        )
+
+        if has_episode_ids:
+            # Without_history mode: aggregate by episode first
+            episode_ids = batch.non_tensor_batch["episode_ids"]
+
+            # Get unique episodes and their entropy (average across turns)
+            unique_episodes = []
+            episode_to_indices = {}
+            for i, eid in enumerate(episode_ids):
+                if eid not in episode_to_indices:
+                    unique_episodes.append(eid)
+                    episode_to_indices[eid] = []
+                episode_to_indices[eid].append(i)
+
+            # Get episode-level entropy (mean of all turns)
+            num_episodes = len(unique_episodes)
+            episode_entropy = torch.zeros(num_episodes, device=entropy_per_traj.device)
+            for i, eid in enumerate(unique_episodes):
+                indices = episode_to_indices[eid]
+                episode_entropy[i] = entropy_per_traj[indices].mean()
+
+            # Calculate group_size as episodes per group
+            group_size = num_episodes // num_groups
+
+            # Reshape to (num_groups, group_size)
+            entropy_per_group = episode_entropy.view(num_groups, group_size)
+        else:
+            # Original mode: each sample is an episode
+            actual_batch_size = entropy_per_traj.shape[0]
+            group_size = actual_batch_size // num_groups
+            entropy_per_group = entropy_per_traj.view(num_groups, group_size)
 
         in_group_std = entropy_per_group.std(dim=-1)
         in_group_max = entropy_per_group.max(dim=-1).values
@@ -227,7 +320,23 @@ class EntropyRolloutFilter(RolloutFilter):
         if rollout_filter_ratio >= 1:
             return batch, metrics
 
-        mask = self._groups_to_mask(top_groups)
+        if has_episode_ids:
+            # Build mask for turn-level samples based on selected groups
+            selected_episodes = set()
+            for gid in top_groups.cpu().tolist():
+                start_ep = gid * group_size
+                end_ep = start_ep + group_size
+                for ep_idx in range(start_ep, end_ep):
+                    selected_episodes.add(unique_episodes[ep_idx])
+
+            # Build turn-level mask
+            mask = torch.tensor(
+                [episode_ids[i] in selected_episodes for i in range(len(episode_ids))],
+                dtype=torch.bool
+            )
+        else:
+            mask = self._groups_to_mask(top_groups, group_size)
+
         batch = self._apply_mask(batch, mask)
 
         return batch, metrics

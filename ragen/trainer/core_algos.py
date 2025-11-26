@@ -15,12 +15,65 @@ from verl.workers.config import ActorConfig
 from verl.trainer.ppo.core_algos import (
     agg_loss,
     compute_gae_advantage_return,
-    compute_grpo_outcome_advantage,
+    compute_grpo_outcome_advantage as _compute_grpo_outcome_advantage,
     compute_reinforce_plus_plus_outcome_advantage,
     compute_reinforce_plus_plus_baseline_outcome_advantage,
     compute_rloo_outcome_advantage,
     compute_value_loss,
 )
+
+
+def compute_grpo_outcome_advantage(
+    token_level_rewards: torch.Tensor,
+    response_mask: torch.Tensor,
+    index: np.ndarray,
+    epsilon: float = 1e-6,
+    norm_adv_by_std_in_grpo: bool = True,
+    episode_ids: Optional[np.ndarray] = None,
+):
+    """
+    Compute advantage for GRPO with episode-level deduplication support.
+
+    When episode_ids is provided (for without_history mode), each (index, episode_id) pair
+    only contributes once to mean/std calculation, avoiding bias from different turn counts.
+    """
+    scores = token_level_rewards.sum(dim=-1)
+
+    id2score = defaultdict(list)
+    id2mean = {}
+    id2std = {}
+
+    with torch.no_grad():
+        bsz = scores.shape[0]
+
+        # Use seen_pairs to deduplicate when episode_ids is provided
+        seen_pairs = set()
+        for i in range(bsz):
+            if episode_ids is not None:
+                pair = (index[i], episode_ids[i])
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+            id2score[index[i]].append(scores[i])
+
+        for idx in id2score:
+            if len(id2score[idx]) == 1:
+                id2mean[idx] = torch.tensor(0.0)
+                id2std[idx] = torch.tensor(1.0)
+            elif len(id2score[idx]) > 1:
+                scores_tensor = torch.stack(id2score[idx])
+                id2mean[idx] = torch.mean(scores_tensor)
+                id2std[idx] = torch.std(scores_tensor)
+            else:
+                raise ValueError(f"no score in prompt index: {idx}")
+        for i in range(bsz):
+            if norm_adv_by_std_in_grpo:
+                scores[i] = (scores[i] - id2mean[index[i]]) / (id2std[index[i]] + epsilon)
+            else:
+                scores[i] = scores[i] - id2mean[index[i]]
+        scores = scores.unsqueeze(-1) * response_mask
+
+    return scores, scores
 
 # supported by Kangrui Wang
 def compute_bi_level_gae_advantage_return(

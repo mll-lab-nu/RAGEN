@@ -24,6 +24,7 @@ from verl.single_controller.ray.base import create_colocated_worker_cls
 from verl.trainer.config import AlgoConfig
 from verl.trainer.ppo import core_algos
 from verl.trainer.ppo.core_algos import AdvantageEstimator, agg_loss
+from ragen.trainer.core_algos import compute_grpo_outcome_advantage
 from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
     compute_throughout_metrics,
@@ -52,6 +53,81 @@ from ragen.llm_agent.agent_proxy import LLMAgentProxy
 from ragen.utils import GenerationsLogger
 from ragen.trainer.rollout_filter import build_rollout_filter
 
+
+def adjust_batch(batch: DataProto, size_divisor: int, mode: str = "copy") -> DataProto:
+    """
+    Adjust batch size to be divisible by size_divisor.
+
+    Args:
+        batch: The DataProto batch to adjust
+        size_divisor: The number that batch size should be divisible by
+        mode: "copy" to duplicate samples, "delete" to remove samples
+
+    Returns:
+        Adjusted DataProto with batch size divisible by size_divisor
+    """
+    bs = len(batch.batch) if hasattr(batch.batch, '__len__') else batch.batch.batch_size[0]
+    remainder = bs % size_divisor
+
+    if remainder == 0:
+        return batch
+
+    if mode == "delete":
+        # Remove samples to make it divisible
+        remove_indices = np.random.choice(bs, remainder, replace=False)
+        keep_mask = np.ones(bs, dtype=bool)
+        keep_mask[remove_indices] = False
+
+        keep_mask_tensor = torch.tensor(keep_mask, dtype=torch.bool)
+        if batch.batch is not None:
+            tensor_data = batch.batch[keep_mask_tensor]
+        else:
+            tensor_data = None
+
+        non_tensor_data = {}
+        if batch.non_tensor_batch is not None:
+            for key, val in batch.non_tensor_batch.items():
+                if isinstance(val, np.ndarray):
+                    non_tensor_data[key] = val[keep_mask]
+                elif isinstance(val, list):
+                    non_tensor_data[key] = [v for v, m in zip(val, keep_mask) if m]
+                else:
+                    non_tensor_data[key] = val
+
+        adjusted_batch = DataProto(batch=tensor_data, non_tensor_batch=non_tensor_data, meta_info=batch.meta_info)
+
+    elif mode == "copy":
+        # Duplicate samples to make it divisible
+        to_add = size_divisor - remainder
+        dup_indices = np.random.choice(bs, to_add, replace=False)
+
+        # Create duplicated batch using TensorDict concat
+        dup_indices_tensor = torch.tensor(dup_indices, dtype=torch.long)
+        if batch.batch is not None:
+            dup_tensor_data = batch.batch[dup_indices_tensor]
+            # Use TensorDict's cat method
+            from tensordict import TensorDict
+            tensor_data = TensorDict.cat([batch.batch, dup_tensor_data], dim=0)
+        else:
+            tensor_data = None
+
+        non_tensor_data = {}
+        if batch.non_tensor_batch is not None:
+            for key, val in batch.non_tensor_batch.items():
+                if isinstance(val, np.ndarray):
+                    dup_val = val[dup_indices]
+                    non_tensor_data[key] = np.concatenate([val, dup_val], axis=0)
+                elif isinstance(val, list):
+                    dup_val = [val[i] for i in dup_indices]
+                    non_tensor_data[key] = val + dup_val
+                else:
+                    non_tensor_data[key] = val
+
+        adjusted_batch = DataProto(batch=tensor_data, non_tensor_batch=non_tensor_data, meta_info=batch.meta_info)
+    else:
+        raise ValueError(f"Unsupported mode: {mode}. Use 'copy' or 'delete'.")
+
+    return adjusted_batch
 
 
 def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1, multi_turn=False, norm_adv_by_std_in_grpo=True, bi_level_gae=False, high_level_gamma=1.0):
@@ -88,11 +164,14 @@ def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_re
             response_length = grpo_calculation_mask.size(1)  # Get length from the initial response mask
             grpo_calculation_mask = data.batch["loss_mask"][:, -response_length:]  # This mask is the one intended for GRPO
         # Call compute_grpo_outcome_advantage with parameters matching its definition
-        advantages, returns = core_algos.compute_grpo_outcome_advantage(
+        # Pass episode_ids for deduplication in without_history mode
+        episode_ids = data.non_tensor_batch.get("episode_ids", None)
+        advantages, returns = compute_grpo_outcome_advantage(
             token_level_rewards=data.batch["token_level_rewards"],
             response_mask=grpo_calculation_mask,
             index=data.non_tensor_batch["uid"],
             norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+            episode_ids=episode_ids,
         )
         data.batch["advantages"] = advantages
         data.batch["returns"] = returns
@@ -219,9 +298,6 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
         env_metric_dict = {}
         for step in range(self.config.trainer.validation_steps):
-            # Store original inputs
-            input_texts = ["" for _ in range(self.config.es_manager.val.env_groups * self.config.es_manager.val.group_size)]
-            sample_inputs.extend(input_texts)
             
             meta_info = {
                 "eos_token_id": self.tokenizer.eos_token_id,
@@ -244,23 +320,80 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                     env_metric_dict["val-env/" + key] = []
                 env_metric_dict["val-env/" + key].append(value)
 
-            # Store generated outputs
+            # Store original inputs and outputs
+            batch_size = test_batch.batch["input_ids"].shape[0]
             output_ids = test_batch.batch["responses"]
             output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids]
-            sample_outputs.extend(output_texts)
+
+            # Handle without_history mode: group messages by episode
+            without_history = getattr(self.config.agent_proxy, "without_history", False)
+            if without_history and "messages_list" in test_batch.non_tensor_batch:
+                # Group samples by episode_id to reconstruct episodes
+                episode_ids = test_batch.non_tensor_batch["episode_ids"]
+                messages_list = test_batch.non_tensor_batch["messages_list"]
+
+                # Find unique episodes and their samples
+                unique_groups = []
+                group_to_indices = {}
+                for i, eid in enumerate(episode_ids):
+                    if eid not in group_to_indices:
+                        unique_groups.append(eid)
+                        group_to_indices[eid] = []
+                    group_to_indices[eid].append(i)
+
+                # Create grouped outputs
+                grouped_inputs = []
+                grouped_outputs = []
+                for gid in unique_groups:
+                    indices = group_to_indices[gid]
+                    # Combine all messages from this episode
+                    episode_output = ""
+                    for idx in indices:
+                        msgs = messages_list[idx]
+                        for msg in msgs:
+                            role = msg.get("role", "unknown")
+                            content = msg.get("content", "")
+                            episode_output += f"[{role}]\n{content}\n\n"
+                    grouped_inputs.append("")
+                    grouped_outputs.append(episode_output.strip())
+
+                sample_inputs.extend(grouped_inputs)
+                sample_outputs.extend(grouped_outputs)
+            else:
+                input_texts = ["" for _ in range(batch_size)]
+                sample_inputs.extend(input_texts)
+                sample_outputs.extend(output_texts)
 
             # evaluate using reward_function
             result = self.val_reward_fn(test_batch, return_dict=True)
             reward_tensor = result["reward_tensor"]
             scores = reward_tensor.sum(-1).cpu().tolist()
-            sample_scores.extend(scores)
 
-            reward_extra_infos_dict["reward"].extend(scores)
+            # Group scores by episode if without_history mode
+            if without_history and "messages_list" in test_batch.non_tensor_batch:
+                grouped_scores = []
+                for gid in unique_groups:
+                    indices = group_to_indices[gid]
+                    # Use the first turn's score (all turns have same episode reward)
+                    episode_score = scores[indices[0]]
+                    grouped_scores.append(episode_score)
+                sample_scores.extend(grouped_scores)
+                reward_extra_infos_dict["reward"].extend(grouped_scores)
+            else:
+                sample_scores.extend(scores)
+                reward_extra_infos_dict["reward"].extend(scores)
             if "reward_extra_info" in result:
                 for key, lst in result["reward_extra_info"].items():
                     reward_extra_infos_dict[key].extend(lst)
 
-            data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
+            # Get data sources and group if needed
+            data_sources_batch = test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0])
+            if without_history and "messages_list" in test_batch.non_tensor_batch:
+                # Group data sources by episode
+                grouped_data_sources = [data_sources_batch[group_to_indices[gid][0]] for gid in unique_groups]
+                data_source_lst.append(grouped_data_sources)
+            else:
+                data_source_lst.append(data_sources_batch)
 
         self._maybe_log_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores, _type="val")
 
@@ -384,10 +517,46 @@ class RayAgentTrainer(VerlRayPPOTrainer):
         last_val_metrics = None
 
         def _process_batch_for_logging(batch):
-            inputs = batch.batch["input_ids"]
-            inputs = [self.tokenizer.decode(input_ids, skip_special_tokens=True) for input_ids in inputs]
+            inputs_raw = batch.batch["input_ids"]
+            inputs = [self.tokenizer.decode(input_ids, skip_special_tokens=True) for input_ids in inputs_raw]
             outputs = [""] * len(inputs)
             scores = batch.batch["rm_scores"].sum(-1).cpu().tolist()
+
+            # Group by episode if without_history mode
+            without_history = getattr(self.config.agent_proxy, "without_history", False)
+            if without_history and "messages_list" in batch.non_tensor_batch:
+                episode_ids = batch.non_tensor_batch["episode_ids"]
+                messages_list = batch.non_tensor_batch["messages_list"]
+
+                # Find unique episodes and their samples
+                unique_groups = []
+                group_to_indices = {}
+                for i, eid in enumerate(episode_ids):
+                    if eid not in group_to_indices:
+                        unique_groups.append(eid)
+                        group_to_indices[eid] = []
+                    group_to_indices[eid].append(i)
+
+                # Create grouped outputs
+                grouped_inputs = []
+                grouped_outputs = []
+                grouped_scores = []
+                for gid in unique_groups:
+                    indices = group_to_indices[gid]
+                    # Combine all messages from this episode
+                    episode_output = ""
+                    for idx in indices:
+                        msgs = messages_list[idx]
+                        for msg in msgs:
+                            role = msg.get("role", "unknown")
+                            content = msg.get("content", "")
+                            episode_output += f"[{role}]\n{content}\n\n"
+                    grouped_inputs.append("")
+                    grouped_outputs.append(episode_output.strip())
+                    grouped_scores.append(scores[indices[0]])
+
+                return grouped_inputs, grouped_outputs, grouped_scores
+
             return inputs, outputs, scores
 
         import time
@@ -403,7 +572,25 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 # generate a batch
                 with marked_timer("gen", timing_raw):
                     batch = self.agent_proxy.rollout(batch, val=False)
+
+                    # Filter first, then adjust batch size
                     batch, metrics = self.rollout_filter.filter(batch)
+
+                    # Adjust batch size to be divisible by num_groups, ppo_mini_batch_size, and n_gpus
+                    num_groups = self.config.es_manager.train.env_groups
+                    ppo_mini_batch_size = self.config.actor_rollout_ref.actor.ppo_mini_batch_size
+                    n_gpus = self.config.trainer.n_gpus_per_node
+                    size_divisor = np.lcm.reduce([num_groups, ppo_mini_batch_size, n_gpus])
+                    adjust_mode = getattr(self.config.agent_proxy, "batch_adjust_mode", "copy")
+                    batch = adjust_batch(batch, size_divisor, mode=adjust_mode)
+
+                    # Record batch and mini-batch statistics
+                    batch_size = batch.batch["input_ids"].shape[0]
+                    num_mini_batches = batch_size // ppo_mini_batch_size
+                    metrics.update({
+                        "train/batch_size": batch_size,
+                        "train/num_mini_batches": num_mini_batches,
+                    })
                     metrics.update({"train/" + key: value for key, value in batch.meta_info["metrics"].items()})
 
                     inputs, outputs, scores = _process_batch_for_logging(batch)
