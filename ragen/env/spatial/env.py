@@ -28,6 +28,7 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
         
         self.exploration_manager = None
         self.prompter = SpatialPrompter(self.config, np.random.RandomState(42))
+        self._rendered = False
 
     def reset(self, seed: Optional[int] = None, mode=None) -> str:
         gym.Env.reset(self, seed=seed) # Sets self.np_random
@@ -77,9 +78,11 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
         self.current_step_count = 0
         self.last_obs = prompt
         self.last_info = {}
+        self._rendered = False
         return prompt
         
     def step(self, action: str) -> Tuple[str, float, bool, Dict[str, Any]]:
+        self._rendered = False
         self.current_step_count += 1
         
         # Parse action
@@ -136,6 +139,9 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
         return obs, reward, done, info
 
     def render(self, mode=None):
+        if self._rendered:
+            return "invalid format"
+        self._rendered = True
         return self.last_obs
         
     def close(self):
@@ -152,15 +158,23 @@ if __name__ == "__main__":
     RoomPlotter.plot(env.room, env.agent, mode='img', save_path='room.png')
     
     # Test a few steps
+    print("\nStep 0: Invalid action")
+    obs, reward, done, info = env.step("Actions: [Rotate(45)]")
+    obs = env.render()
+    print(f"Reward: {reward}, Done: {done}, Info: {info}, Obs: {obs}")
+
     print("\nStep 1: Rotate and Observe")
     obs, reward, done, info = env.step("Actions: [Rotate(90), Observe()]")
+    obs = env.render()
     print(f"Reward: {reward}, Done: {done}, Info: {info}, Obs: {obs}")
     
     print("\nStep 2: Jump to red door and Observe")
     obs, reward, done, info = env.step("Actions: [JumpTo(red door), Observe()]")
+    obs = env.render()
     print(f"Reward: {reward}, Done: {done}, Info: {info}, Obs: {obs}")
     
     print("\nStep 3: Terminate with answer")
     obs, reward, done, info = env.step("Actions: [Term(C)]")
+    obs = env.render()
     print(f"Reward: {reward}, Done: {done}, Info: {info}, Obs: {obs}")
     
