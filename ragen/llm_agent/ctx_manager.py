@@ -269,7 +269,14 @@ class ContextManager:
                     if "state" in content:
                         FORMAT_PROMPT = "<think> [Your thoughts] </think> <answer> [your answer] </answer>" if self.config.agent_proxy.enable_think else "<answer> [your answer] </answer>"
                         LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_output['env_id']]['max_tokens']} words (tokens)."
-                        messages[-1]["content"] += f"State:\n{content['state']}\nYou have {content['actions_left']} actions left. Always output: {FORMAT_PROMPT} with no extra text. Strictly follow this format. {LENGTH_PROMPT}\n"
+                        warning = ""
+                        if content.get('manager_invalid_action'):
+                            warning = "No valid action provided previously. Environment state remains the same. Please try again.\n"
+                        messages[-1]["content"] += (
+                            f"State:\n{content['state']}\n{warning}"
+                            f"You have {content['actions_left']} actions left. Always output: {FORMAT_PROMPT} "
+                            f"with no extra text. Strictly follow this format. {LENGTH_PROMPT}\n"
+                        )
                     if "llm_response" in content:
                         messages.append({"role": "assistant", "content": content["llm_response"]})
                     if "reward" in content and not (prepare_for_update and idx == len(history) - 1):

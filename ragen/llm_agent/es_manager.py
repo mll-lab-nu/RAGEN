@@ -222,11 +222,17 @@ class EnvStateManager:
             # execute actions in envs
             valid_actions = self._extract_map_valid_actions(entry, env_input['actions'])
             acc_reward, turn_info, turn_done, executed_actions = _execute_actions(env, valid_actions[:actions_left_before])
+            no_manager_action = len(valid_actions) == 0
             penalty_delta = 0.0
             if len(valid_actions) != len(env_input['actions']) or not valid_actions:
                 penalty_delta = self.sys_config.es_manager.format_penalty
+            if no_manager_action:
+                turn_info = dict(turn_info)
+                turn_info['manager_invalid_action'] = True
 
             status, history = _log_env_state(entry['status'], self.rollout_cache[env_id]['history'], entry['env'].render(), entry['max_actions_per_traj'], executed_actions, valid_actions, acc_reward, turn_done, turn_info, env_input)
+            if no_manager_action and history:
+                history[-1]['manager_invalid_action'] = True
             if status.num_actions >= entry['max_actions_per_traj'] and not turn_done:
                 status.truncated = True
                 status.terminated = True
