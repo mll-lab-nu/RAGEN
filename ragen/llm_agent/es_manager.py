@@ -206,6 +206,7 @@ class EnvStateManager:
             all_obs = []
             all_rewards = []
             next_state = ""
+            obs = None
             for action in actions:
                 obs, reward, done, info = env.step(action)
                 acc_reward += reward
