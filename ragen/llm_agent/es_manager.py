@@ -206,7 +206,7 @@ class EnvStateManager:
             all_obs = []
             all_rewards = []
             next_state = ""
-            obs = None
+            obs = env.render()
             for action in actions:
                 obs, reward, done, info = env.step(action)
                 acc_reward += reward
@@ -218,9 +218,12 @@ class EnvStateManager:
                     turn_done = True
                     break
             if self.sys_config.es_manager.render_multi_actions:
-                # TODO: support multimodal state rendering for multi-action
-                action_lookup = getattr(env.config, "action_lookup", None)
-                next_state = _render_next_state(executed_actions, all_obs, all_rewards, action_lookup)
+                if len(executed_actions) == 0:
+                    next_state = self._handle_mm_state(obs)
+                else:
+                    # TODO: support multimodal state rendering for multi-action
+                    action_lookup = getattr(env.config, "action_lookup", None)
+                    next_state = _render_next_state(executed_actions, all_obs, all_rewards, action_lookup)
             else:
                 next_state = self._handle_mm_state(obs)
             
@@ -469,6 +472,12 @@ def main(config):
             "llm_raw_response": "Go left, go up",
             "llm_response": "Go left, go up",
             "actions": ["left", "up"]
+        },
+        {
+            "env_id": 1,
+            "llm_raw_response": "NONSENSE, NONSENSE",
+            "llm_response": "NONSENSE, NONSENSE",
+            "actions": ["NONSENSE", "NONSENSE"]
         },
         {
             "env_id": 3,
