@@ -48,7 +48,7 @@ class SpatialPrompter(Prompter):
         template = INSTRUCTION_TEMPLATE_TEXT
 
         # Custom goal
-        goal_lines = "Goal: Answer the evaluation question."
+        goal_lines = "Explore the environment with given actions to answer the evaluation question."
 
         fmt_kwargs = {
             'title': 'Spatial Exploration Task',

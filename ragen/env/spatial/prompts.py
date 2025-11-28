@@ -1,6 +1,6 @@
 # ragen/env/spatial/prompts.py
 
-SHARED_INTRO_TEXT = "You are a spatial reasoner in a 2D, text-only N×M grid. Every object including you is a point at integer (x, y) coordinates."
+SHARED_INTRO_TEXT = "You are a spatial reasoner in indoor environment, a 2D, text-only N×M grid. Every object including you is a point at integer (x, y) coordinates."
 
 SHARED_INTRO_VISION = (
     "You are a spatial reasoner in a 3D simulated environment. "
@@ -21,9 +21,7 @@ SHARED_RULES_COMMON = """\
 """
 
 # Optimized: Emphasize answering evaluation question, remove coverage goals.
-ACTIVE_RULES_EXTRA = """\
-- Goal: Explore the environment to answer the question.
-"""
+ACTIVE_RULES_EXTRA = ""
 
 VISION_EXAMPLE = """\
 Here is an example of your observation: blue cylinder 1 m straight ahead; red cylinder 2 m straight ahead; yellow cylinder 2 m at 45° to your front-left; green cylinder 3 m at 22.5° to your front-slight-right:

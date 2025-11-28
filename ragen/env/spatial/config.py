@@ -18,7 +18,7 @@ class SpatialGymConfig:
     main: int = 6
 
     # Exploration configuration
-    max_exp_steps: int = 20
+    max_exp_steps: int = 10
     
     # Evaluation configuration
     eval_tasks: List[str] = field(default_factory=lambda: [

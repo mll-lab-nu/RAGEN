@@ -221,7 +221,7 @@ custom_envs:
 
   Spatial:
     env_type: spatial
-    max_actions_per_traj: 25
+    max_actions_per_traj: 12
     env_instruction: "You are a spatial reasoner. Explore the environment and answer the question."
     max_tokens: 500
     parallel_friendly: true

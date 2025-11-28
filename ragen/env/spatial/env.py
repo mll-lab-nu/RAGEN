@@ -5,7 +5,7 @@ from typing import Any, Dict, Tuple, Optional, List
 from ragen.env.base import BaseLanguageBasedEnv
 from ragen.env.spatial.config import SpatialGymConfig
 from ragen.env.spatial.Base.tos_base.utils.room_utils import RoomGenerator
-from ragen.env.spatial.Base.tos_base.actions.actions import ActionSequence
+from ragen.env.spatial.Base.tos_base.actions.actions import ActionSequence, ACTION_REMINDER
 from ragen.env.spatial.Base.tos_base.evaluation.task_types import EvalTaskType
 from ragen.env.spatial.Base.tos_base.managers.exploration_manager import ExplorationManager
 from ragen.env.spatial.prompter import SpatialPrompter
@@ -73,7 +73,7 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
             self.agent, 
             question=current_question
         )
-        prompt = obs_dict['obs_str']
+        prompt = obs_dict['obs_str'] + "\n" + ACTION_REMINDER
         
         self.current_step_count = 0
         self.last_obs = prompt
@@ -89,7 +89,7 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
         seq = ActionSequence.parse(action)
         if seq is None:
             return self._step_result(
-                obs="Invalid action format. Please follow the grammar.",
+                obs="Invalid action format." + "\n" + ACTION_REMINDER,
                 reward=-1.0,
                 done=False,
                 info={"error": "Invalid action format", "success": False}
@@ -120,7 +120,7 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
                 reward = 10.0
                 info["success"] = True
             else:
-                reward = 0.0
+                reward = -1
                 info["success"] = False
             info["answer"] = term_answer
             info["correct_answer"] = self.current_answer
@@ -128,7 +128,7 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
         if self.current_step_count >= self.max_steps:
             done = True
             
-        obs = "\n".join(feedback_list)
+        obs = "\n".join(feedback_list) + "\n" + ACTION_REMINDER
 
             
         return self._step_result(obs, reward, done, info)
@@ -140,7 +140,7 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
 
     def render(self, mode=None):
         if self._rendered:
-            return "invalid format"
+            return "invalid format" + "\n" + ACTION_REMINDER
         self._rendered = True
         return self.last_obs
         
