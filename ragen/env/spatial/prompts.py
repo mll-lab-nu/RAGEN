@@ -17,14 +17,12 @@ Multi-room rules (may exist multiple rooms):
 """
 
 SHARED_RULES_COMMON = """\
-- FOV is 90°, you can NOT see objects outside your FOV.
-- Track your current and initial pose
+- Field of view: 90°
 """
 
 # Optimized: Emphasize answering evaluation question, remove coverage goals.
 ACTIVE_RULES_EXTRA = """\
-- Your goal is to answer the evaluation question.
-- Explore the environment to gather necessary information.
+- Goal: Explore the environment to answer the question.
 """
 
 VISION_EXAMPLE = """\
