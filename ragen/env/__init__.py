@@ -12,6 +12,8 @@ from .metamathqa.env import MetaMathQAEnv
 from .metamathqa.config import MetaMathQAEnvConfig
 from .lean.config import LeanEnvConfig
 from .lean.env import LeanEnv
+from .sudoku.config import SudokuEnvConfig
+from .sudoku.env import SudokuEnv
 
 
 REGISTERED_ENVS = {
@@ -22,6 +24,7 @@ REGISTERED_ENVS = {
     # 'alfworld': AlfredTXTEnv,
     'metamathqa': MetaMathQAEnv,
     'lean': LeanEnv,
+    'sudoku': SudokuEnv,
 }
 
 REGISTERED_ENV_CONFIGS = {
@@ -32,6 +35,7 @@ REGISTERED_ENV_CONFIGS = {
     # 'alfworld': AlfredEnvConfig,
     'metamathqa': MetaMathQAEnvConfig,
     'lean': LeanEnvConfig,
+    'sudoku': SudokuEnvConfig,
 }
 
 try:
