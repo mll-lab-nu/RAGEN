@@ -53,6 +53,9 @@ main() {
     eval "$(conda shell.bash hook)"
     conda activate ragen
 
+    pip install -U pip setuptools wheel
+    pip install numpy ninja packaging psutil
+
     # Install package in editable mode
     print_step "setting up verl..."
     git submodule init
@@ -64,6 +67,10 @@ main() {
     # Install package in editable mode
     print_step "Installing ragen package..."
     pip install -e .
+
+    # Install spatial environment dependencies
+    print_step "Installing spatial environment dependencies..."
+    pip install -e ragen/env/spatial/Base
     
     # Install PyTorch with CUDA if available
     if check_cuda; then
