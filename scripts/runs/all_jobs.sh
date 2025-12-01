@@ -84,6 +84,7 @@ launch() {
   local env_base_args=()
   local mode_overrides=()
   local det_extra=()
+  local env_env_vars=()
 
   apply_common_mode_overrides() {
     case "$mode" in
@@ -176,6 +177,27 @@ launch() {
       apply_common_mode_overrides || { echo "[launch] Unknown mode '$mode' for sokoban" >&2; return 1; }
       ;;
 
+    sudoku)
+      env_base_args=(
+        "${common_args[@]}"
+        "trainer.save_freq=50"
+        "agent_proxy.max_turn=5"
+        "agent_proxy.max_actions_per_turn=5"
+        "es_manager.train.env_configs.tags=[Sudoku]"
+        "es_manager.val.env_configs.tags=[Sudoku]"
+      )
+      det_extra=(
+        "agent_proxy.max_turn=5"
+        "agent_proxy.max_actions_per_turn=5"
+        "custom_envs.Sudoku.max_actions_per_traj=5"
+        "+custom_envs.Sudoku.env_config.board_size=4"
+        "+custom_envs.Sudoku.env_config.max_steps=30"
+        "+custom_envs.Sudoku.env_config.difficulty=\"easy\""
+      )
+      env_env_vars=("RENDER_MODE=text_with_coordinates")
+      apply_common_mode_overrides || { echo "[launch] Unknown mode '$mode' for sudoku" >&2; return 1; }
+      ;;
+
     webshop)
       env_base_args=(
         "${common_args[@]}"
@@ -216,8 +238,7 @@ launch() {
   mkdir -p "$log_dir"
 
   echo "=== Running ${run_name} (${env}) on GPUs ${visible} ==="
-  CUDA_VISIBLE_DEVICES="${visible}" \
-  WANDB_RUN_ID=${run_name} \
+  env CUDA_VISIBLE_DEVICES="${visible}" WANDB_RUN_ID="${run_name}" "${env_env_vars[@]}" \
   python train.py \
     "${base_args[@]}" \
     "${mode_overrides[@]}" \
@@ -240,4 +261,7 @@ launch sokoban "sokoban_coord_3b_base_ppo_think_s_entvarfilter" True ppo s 8 800
 wait_sleep_reset
 
 launch frozenlake "frozenlake_coord_3b_base_ppo_think_rolloutfilterratio0.75" True ppo void 8 800 "${filter_ratio_0_75_overrides[@]}"
+wait_sleep_reset
+
+launch sudoku "sudoku_4x4_3b_base_ppo_think_s" True ppo s 8 800
 wait_sleep_reset

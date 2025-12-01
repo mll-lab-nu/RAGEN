@@ -148,6 +148,21 @@ custom_envs:
     env_config:
       observation_format: "grid_coord"
 
+  Sudoku:
+    env_type: sudoku
+    max_actions_per_traj: 5
+    env_instruction: |
+      You are solving a 4x4 Sudoku puzzle. Each row and column must contain the digits 1 through 4 exactly once, and sub-grids must also include each digit once.
+      Empty cells are shown as '.' in the grid. Provide moves as 1-indexed "row,col,value" commands, for example <answer>2,3,4</answer>.
+      Think about the remaining constraints before committing to each placement.
+    max_tokens: 256
+    parallel_friendly: false
+    max_workers: 32
+    env_config:
+      board_size: 4
+      max_steps: 30
+      difficulty: "easy"
+
   MetamathQA:
     env_type: metamathqa
     max_actions_per_traj: 1
