@@ -218,3 +218,16 @@ custom_envs:
     parallel_friendly: true
     max_workers: 32
     env_config: null # Please refer to ragen/env/lean/config.py for a full list of parameters.
+
+  Spatial:
+    env_type: spatial
+    max_actions_per_traj: 12
+    env_instruction: "You are a spatial reasoner. Explore the environment and answer the question."
+    max_tokens: 500
+    parallel_friendly: true
+    max_workers: 32
+    env_config:
+      room_size: [20, 20]
+      level: 0
+      n_objects: 5
+      main: 6
