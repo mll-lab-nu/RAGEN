@@ -10,10 +10,12 @@ from .frozen_lake.config import FrozenLakeEnvConfig
 from .frozen_lake.env import FrozenLakeEnv
 from .metamathqa.env import MetaMathQAEnv
 from .metamathqa.config import MetaMathQAEnvConfig
-# from .lean.config import LeanEnvConfig
-# from .lean.env import LeanEnv
+from .lean.config import LeanEnvConfig
+from .lean.env import LeanEnv
 from .spatial.config import SpatialGymConfig
 from .spatial.env import SpatialGym
+from .sudoku.config import SudokuEnvConfig
+from .sudoku.env import SudokuEnv
 
 
 REGISTERED_ENVS = {
@@ -23,8 +25,9 @@ REGISTERED_ENVS = {
     'frozen_lake': FrozenLakeEnv,
     # 'alfworld': AlfredTXTEnv,
     'metamathqa': MetaMathQAEnv,
-    # 'lean': LeanEnv,
+    'lean': LeanEnv,
     'spatial': SpatialGym,
+    'sudoku': SudokuEnv,
 }
 
 REGISTERED_ENV_CONFIGS = {
@@ -34,8 +37,9 @@ REGISTERED_ENV_CONFIGS = {
     'frozen_lake': FrozenLakeEnvConfig,
     # 'alfworld': AlfredEnvConfig,
     'metamathqa': MetaMathQAEnvConfig,
-    # 'lean': LeanEnvConfig,
+    'lean': LeanEnvConfig,
     'spatial': SpatialGymConfig,
+    'sudoku': SudokuEnvConfig,
 }
 
 try:

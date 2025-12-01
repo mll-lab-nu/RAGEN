@@ -1,0 +1,17 @@
+defaults:
+  - base
+
+trainer:
+  experiment_name: sudoku-${oc.env:MODEL}-RENDER_MODE${oc.env:RENDER_MODE}-fixed-easy12
+
+agent_proxy:
+  max_turn: 5
+  max_actions_per_turn: 5 # how many actions can be output at most in a single turn
+
+es_manager:
+  train:
+    env_configs:
+      tags: ["Sudoku"]
+  val:
+    env_configs:
+      tags: ["Sudoku"]
