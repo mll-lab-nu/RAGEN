@@ -204,6 +204,8 @@ launch() {
         "trainer.save_freq=50"
         "agent_proxy.max_turn=12"
         "agent_proxy.max_actions_per_turn=4"
+        "actor_rollout_ref.rollout.max_model_len=10000"
+        "actor_rollout_ref.rollout.max_num_batched_tokens=10000"
         "es_manager.train.env_configs.tags=[Spatial]"
         "es_manager.val.env_configs.tags=[Spatial]"
       )
