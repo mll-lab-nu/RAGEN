@@ -198,6 +198,19 @@ launch() {
       apply_common_mode_overrides || { echo "[launch] Unknown mode '$mode' for sudoku" >&2; return 1; }
       ;;
 
+    spatial)
+      env_base_args=(
+        "${common_args[@]}"
+        "trainer.save_freq=50"
+        "agent_proxy.max_turn=12"
+        "agent_proxy.max_actions_per_turn=4"
+        "es_manager.train.env_configs.tags=[Spatial]"
+        "es_manager.val.env_configs.tags=[Spatial]"
+      )
+      det_extra=()
+      apply_common_mode_overrides || { echo "[launch] Unknown mode '$mode' for spatial" >&2; return 1; }
+      ;;
+
     webshop)
       env_base_args=(
         "${common_args[@]}"

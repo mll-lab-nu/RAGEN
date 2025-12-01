@@ -12,3 +12,6 @@ wait_sleep_reset
 
 launch sudoku "sudoku_4x4_3b_base_ppo_think_s" True ppo s 8 800
 wait_sleep_reset
+
+launch spatial "spatial_3b_base_ppo_think_s" True ppo s 8 800
+wait_sleep_reset
