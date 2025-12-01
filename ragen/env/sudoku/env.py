@@ -372,7 +372,7 @@ class SudokuEnv(BaseLanguageBasedEnv, gym.Env):
         return puzzle, solved
 
     # --------- Public API: reset / step / render ---------
-    def reset(self, seed: Optional[int] = None):
+    def reset(self, seed: Optional[int] = None, **kwargs):
         """
         保持你之前的返回约定：只返回 obs（文本）。
         如需 gymnasium 正式签名 (obs, info)，可改为 return self.render_cache, {}
