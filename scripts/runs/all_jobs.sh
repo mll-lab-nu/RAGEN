@@ -14,4 +14,7 @@ launch sudoku "sudoku_4x4_3b_base_ppo_think_s" True ppo s 8 800
 wait_sleep_reset
 
 launch spatial "spatial_3b_base_ppo_think_s" True ppo s 8 800
+launch spatial "spatial_3b_base_ppo_think_normal" True ppo normal 8 800
+launch spatial "spatial_3b_base_grpo_think_normal" True grpo normal 8 800
+
 wait_sleep_reset
