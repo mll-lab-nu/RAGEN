@@ -61,13 +61,13 @@ es_manager:
     env_groups: 8
     group_size: 16
     env_configs:
-      tags: ["CoordSokoban"]
+      tags: ["Spatial"]
       n_groups: [8]
   val:
     env_groups: 32
     group_size: 16
     env_configs:
-      tags: ["CoordSokoban"]
+      tags: ["Spatial"]
       n_groups: [32]
 
 ctx_manager:

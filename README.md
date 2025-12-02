@@ -197,7 +197,7 @@ Please check the `val/generations` metric in your wandb dashboard to see the tra
 
 ## Performance
 
-We evaluate RAGEN across multiple environments. Below are results Qwen-2.5-0.5B-Instruct on Sokoban, Frozenlake, and Bandit. 
+We evaluate RAGEN across multiple environments. Below are results Qwen-2.5-0.5B-Instruct on Sokoban, Frozenlake, Bandit, and Spatial. 
 - No KL loss or KL penalty was applied during training
 - We selectively retained only the top 25% of trajectories that successfully completed their respective tasks
 
