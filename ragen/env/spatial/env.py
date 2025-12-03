@@ -1,11 +1,12 @@
 import gymnasium as gym
 import numpy as np
+import re
 from typing import Any, Dict, Tuple, Optional, List
 
 from ragen.env.base import BaseLanguageBasedEnv
 from ragen.env.spatial.config import SpatialGymConfig
 from ragen.env.spatial.Base.tos_base.utils.room_utils import RoomGenerator
-from ragen.env.spatial.Base.tos_base.actions.actions import ActionSequence, ACTION_REMINDER
+from ragen.env.spatial.Base.tos_base.actions.actions import ActionSequence, ACTION_REMINDER, TermAction
 from ragen.env.spatial.Base.tos_base.evaluation.task_types import EvalTaskType
 from ragen.env.spatial.Base.tos_base.managers.exploration_manager import ExplorationManager
 from ragen.env.spatial.prompter import SpatialPrompter
@@ -17,7 +18,7 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
         print(f"Config: {self.config}")
         self.render_mode = self.config.render_mode
         # User requirement: max steps should be 1 step more than max exp steps
-        self.max_steps = self.config.max_exp_steps + 1
+        self.max_steps = self.config.max_exp_steps
         
         self.room = None
         self.agent = None
@@ -56,12 +57,16 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
         task_name = self.np_random.choice(self.config.eval_tasks)
         
         # Create task
+        # Create task
+        from dataclasses import asdict
         current_task = EvalTaskType.create_task(
             task_name, 
             np_random=self.np_random, 
             room=self.room, 
-            agent=self.agent
+            agent=self.agent,
+            config=asdict(self.config)
         )
+        self.current_task = current_task
         
         # Generate question
         current_question = current_task.generate_question()
@@ -87,7 +92,19 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
         
         # Parse action
         seq = ActionSequence.parse(action)
+
+        if seq is None and self.current_step_count == self.max_steps:
+             # Try to parse direct answer or term(answer)
+             m = re.search(r'term\s*\(\s*([A-D])\s*\)', action, re.IGNORECASE)
+             if not m:
+                 m = re.search(r'\b([A-D])\b', action)
+             if m:
+                 seq = ActionSequence(final_action=TermAction(m.group(1).upper()))
+
         if seq is None:
+            if self.current_step_count == self.max_steps - 1:
+                obs = "Exploration ended. Please directly output the answer, e.g. A/B/C/D."
+                return self._step_result(obs, -1.0, False, {"error": "Invalid action format", "success": False})
             return self._step_result(
                 obs="Invalid action format." + "\n" + ACTION_REMINDER,
                 reward=-1.0,
@@ -125,6 +142,10 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
             info["answer"] = term_answer
             info["correct_answer"] = self.current_answer
         
+        if not terminated and self.current_step_count == self.max_steps - 1:
+            obs = "\n".join(feedback_list) + "\n" + "Exploration ended. Please directly output the answer, e.g. A/B/C/D."
+            return self._step_result(obs, reward, False, info)
+
         if self.current_step_count >= self.max_steps:
             done = True
             
@@ -148,7 +169,7 @@ class SpatialGym(BaseLanguageBasedEnv, gym.Env):
         pass
 
 if __name__ == "__main__":
-    config = SpatialGymConfig(room_size=[20, 20], n_objects=5, level=0, main=6)
+    config = SpatialGymConfig(room_size=[20, 20], n_objects=5, level=0, main=6, relation_mode='real')
     env = SpatialGym(config)
     obs = env.reset(seed=42)
     print("Initial Observation:")

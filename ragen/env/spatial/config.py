@@ -18,13 +18,18 @@ class SpatialGymConfig:
     main: int = 6
 
     # Exploration configuration
-    max_exp_steps: int = 10
+    max_exp_steps: int = 5
     
     # Evaluation configuration
     eval_tasks: List[str] = field(default_factory=lambda: [
-        "dir", "rot", "rot_dual", "pov", "bwd_pov", 
-        "e2a", "fwd_loc", "bwd_loc", "fwd_fov", "bwd_nav"
+        "dir", "rot", "rot_dual", "e2a"
     ])
+    # eval_tasks: List[str] = field(default_factory=lambda: [
+    #     "rot",
+    # ])
+    
+    # Relationship configuration
+    relation_mode: str = "real"
 
     prompt_config: Dict[str, Any] = field(default_factory=lambda: {"topdown": False, "oblique": False, "type": "shorter"})
 

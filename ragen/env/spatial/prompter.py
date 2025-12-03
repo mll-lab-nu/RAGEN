@@ -4,7 +4,8 @@ from ragen.env.spatial.Base.tos_base.prompts.prompter import Prompter
 from ragen.env.spatial.Base.tos_base.actions.actions import ActionSequence
 from ragen.env.spatial.Base.tos_base.utils.room_utils import get_room_description
 from ragen.env.spatial.Base.tos_base.core.relationship import (
-    PairwiseRelationship, PairwiseRelationshipDiscrete, ProximityRelationship, DegreeRel, OrientationRel
+    PairwiseRelationship, PairwiseRelationshipDiscrete, ProximityRelationship, DegreeRel, OrientationRel,
+    RELATION_MODE_REAL
 )
 from .prompts import (
     INSTRUCTION_TEMPLATE_TEXT, SHARED_INTRO_TEXT,
@@ -33,13 +34,16 @@ class SpatialPrompter(Prompter):
 
         room_desc = get_room_description(room, agent, with_topdown=topdown)
 
-        observation_instructions = (
-            PairwiseRelationship.prompt()
-            + f"\n{DegreeRel.prompt()}"
-            + f"\n{OrientationRel.prompt()}"
-            + f"\n{PairwiseRelationshipDiscrete.prompt()}"
-            + f"\n{ProximityRelationship.prompt()}"
-        )
+        if self.config.relation_mode == RELATION_MODE_REAL:
+            observation_instructions = PairwiseRelationship.prompt()
+        else:
+            observation_instructions = (
+                PairwiseRelationship.prompt()
+                + f"\n{DegreeRel.prompt()}"
+                + f"\n{OrientationRel.prompt()}"
+                + f"\n{PairwiseRelationshipDiscrete.prompt()}"
+                + f"\n{ProximityRelationship.prompt()}"
+            )
 
         # Always include action instructions (text only)
         exp_instructions = f"Action Instructions:\n{ActionSequence.get_usage_instructions(vision=False)}"
