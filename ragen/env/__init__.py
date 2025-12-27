@@ -14,6 +14,8 @@ from .lean.config import LeanEnvConfig
 from .lean.env import LeanEnv
 from .sudoku.config import SudokuEnvConfig
 from .sudoku.env import SudokuEnv
+from .search.env import SearchEnv
+from .search.config import SearchEnvConfig
 
 
 REGISTERED_ENVS = {
@@ -25,6 +27,7 @@ REGISTERED_ENVS = {
     'metamathqa': MetaMathQAEnv,
     'lean': LeanEnv,
     'sudoku': SudokuEnv,
+    'search': SearchEnv,
 }
 
 REGISTERED_ENV_CONFIGS = {
@@ -36,6 +39,7 @@ REGISTERED_ENV_CONFIGS = {
     'metamathqa': MetaMathQAEnvConfig,
     'lean': LeanEnvConfig,
     'sudoku': SudokuEnvConfig,
+    'search': SearchEnvConfig,
 }
 
 try:
