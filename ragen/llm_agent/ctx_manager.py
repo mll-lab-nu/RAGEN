@@ -9,7 +9,7 @@ import logging
 import torch
 import numpy as np
 from typing import List, Dict, Any, Optional, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict, is_dataclass
 import re
 from verl import DataProto
 from verl.utils.dataset.rl_dataset import collate_fn
@@ -18,8 +18,6 @@ import hydra
 from ragen.utils import register_resolvers
 from ragen.env import REGISTERED_ENV_CONFIGS
 from tensordict import TensorDict
-
-from dataclasses import asdict
 register_resolvers()
 
 def get_special_tokens(tokenizer: AutoTokenizer):
@@ -105,19 +103,123 @@ class ContextManager:
         if env_type not in REGISTERED_ENV_CONFIGS:
             raise ValueError(f"Environment {env_type} is not installed. Please install it using the scripts/setup_{env_type}.sh script.")
 
+    def _get_or_create_env_config(self, tag_or_dataset: str):
+        """Get environment config from custom_envs, or create dynamically for Search datasets"""
+        # Import here to avoid circular imports
+        from ragen.llm_agent.es_manager import is_search_dataset_name, normalize_to_dataset_name
+        
+        # Check if tag exists in custom_envs
+        if tag_or_dataset in self.config.custom_envs:
+            return self.config.custom_envs[tag_or_dataset]
+        
+        # If not found, check if it's a Search dataset name
+        if is_search_dataset_name(tag_or_dataset):
+            # Use the base Search config as template
+            if 'Search' not in self.config.custom_envs:
+                raise ValueError(f"Base 'Search' config not found in custom_envs. Cannot create Search environment for dataset '{tag_or_dataset}'")
+            
+            base_search_config = self.config.custom_envs['Search']
+            # Create a new config dict with data_source overridden
+            import copy
+            from omegaconf import OmegaConf, DictConfig
+            from dataclasses import is_dataclass, asdict
+            
+            # Convert to dict, handling both DictConfig and dataclass
+            if isinstance(base_search_config, dict):
+                base_config_dict = copy.deepcopy(base_search_config)
+            elif isinstance(base_search_config, DictConfig):
+                base_config_dict = copy.deepcopy(OmegaConf.to_container(base_search_config, resolve=True))
+            elif is_dataclass(base_search_config):
+                base_config_dict = copy.deepcopy(asdict(base_search_config))
+            else:
+                # Fallback: try to convert using vars() or dict()
+                try:
+                    base_config_dict = copy.deepcopy(dict(base_search_config) if hasattr(base_search_config, '__iter__') else vars(base_search_config))
+                except (TypeError, ValueError) as e:
+                    raise TypeError(f"base_search_config must be a dict, DictConfig, or dataclass instance, got {type(base_search_config)}: {e}")
+            
+            new_config = base_config_dict
+            
+            # Normalize to dataset name (handles both 'nq' and 'NQ')
+            dataset_name = normalize_to_dataset_name(tag_or_dataset)
+            
+            # Override data_source
+            if new_config.get('env_config') is None:
+                new_config['env_config'] = {}
+            new_config['env_config']['data_source'] = dataset_name
+            
+            # Set max_steps and max_actions_per_traj based on dataset (only if not already set)
+            # This allows Hydra overrides to custom_envs.Search or custom_envs.<DatasetName> to take precedence
+            # Default values: multi-hop datasets need more steps
+            multi_hop_datasets = {'hotpotqa', '2wikimultihopqa', 'musique'}
+            if dataset_name in multi_hop_datasets:
+                default_max_actions = 6
+                default_max_steps = 6
+            else:
+                default_max_actions = 4
+                default_max_steps = 4
+            
+            # Only set defaults if not already configured (preserves values from base config or Hydra overrides)
+            if 'max_actions_per_traj' not in new_config:
+                new_config['max_actions_per_traj'] = default_max_actions
+            if new_config.get('env_config') and 'max_steps' not in new_config['env_config']:
+                new_config['env_config']['max_steps'] = default_max_steps
+            
+            # Create a simple object to hold the config
+            class DynamicEnvConfig:
+                def __init__(self, config_dict):
+                    self.env_type = config_dict.get('env_type', 'search')
+                    self.max_actions_per_traj = config_dict.get('max_actions_per_traj', 4)
+                    self.env_config = config_dict.get('env_config', {})
+                    self.env_instruction = config_dict.get('env_instruction', '')
+                    self.max_tokens = config_dict.get('max_tokens', 500)
+                    for k, v in config_dict.items():
+                        if not hasattr(self, k):
+                            setattr(self, k, v)
+            
+            return DynamicEnvConfig(new_config)
+        
+        raise ValueError(f"Environment tag or dataset name '{tag_or_dataset}' not found in custom_envs and is not a valid Search dataset name")
+
     def _init_prefix_lookup(self):
         prefix_lookup = {}
         prefixes = {}
         env_config_lookup = {}
-        env_config = {}
-        for env_tag, env_config in self.config.custom_envs.items():
-            if env_tag not in self.es_cfg.env_configs.tags:
-                continue
-
+        # Process all tags/dataset names from es_cfg
+        for env_tag in self.es_cfg.env_configs.tags:
+            env_config = self._get_or_create_env_config(env_tag)
+            
             self._check_env_installed(env_config.env_type)
             env_config_new = asdict(REGISTERED_ENV_CONFIGS[env_config.env_type]())
-            for k,v in env_config.items():
-                env_config_new[k] = v
+            
+            # Convert env_config to dict if it's a DictConfig or dataclass instance
+            from omegaconf import DictConfig, OmegaConf
+            if isinstance(env_config, DictConfig):
+                env_config_dict = OmegaConf.to_container(env_config, resolve=True)
+            elif is_dataclass(env_config):
+                env_config_dict = asdict(env_config)
+            elif hasattr(env_config, '__dict__'):
+                # Handle DynamicEnvConfig and other objects with __dict__
+                env_config_dict = vars(env_config)
+            else:
+                # Fallback: empty dict
+                env_config_dict = {}
+            
+            for k, v in env_config_dict.items():
+                if k != 'env_config' or v is not None:
+                    env_config_new[k] = v
+            
+            # Handle env_config separately
+            if hasattr(env_config, 'env_config') and env_config.env_config:
+                if env_config_new.get('env_config') is None:
+                    env_config_new['env_config'] = {}
+                if isinstance(env_config.env_config, dict):
+                    env_config_new['env_config'].update(env_config.env_config)
+                else:
+                    # Convert to dict if needed
+                    env_config_dict_inner = asdict(env_config.env_config) if is_dataclass(env_config.env_config) else dict(env_config.env_config)
+                    env_config_new['env_config'].update(env_config_dict_inner)
+            
             env_instruction = env_config_new.get("env_instruction", "")
             observation_format = env_config_new.get("observation_format", "grid")
             if observation_format == "grid" and env_config_new.get("grid_vocab", False):
@@ -135,7 +237,26 @@ class ContextManager:
                 action_lookup_str += f"\nYou can make up to {env_config_new['max_actions_per_traj']} actions, separated by the action separator \" " + self.action_sep + " \"\n"
                 env_instruction += action_lookup_str
             prefixes[env_tag] = env_instruction
-            env_config_lookup[env_tag] = {'max_tokens': env_config.get("max_tokens", self.config.actor_rollout_ref.rollout.response_length)}
+            # Get attributes from env_config (handles both dict-like and object-like configs)
+            max_tokens = getattr(env_config, 'max_tokens', None) or (env_config_dict.get('max_tokens') if isinstance(env_config_dict, dict) else None) or self.config.actor_rollout_ref.rollout.response_length
+            env_config_inner = getattr(env_config, 'env_config', None) or env_config_dict.get('env_config', {}) if isinstance(env_config_dict, dict) else {}
+            data_source = ''
+            reward_type = 'em'
+            if env_config_inner:
+                if isinstance(env_config_inner, dict):
+                    data_source = env_config_inner.get('data_source', '')
+                    reward_type = env_config_inner.get('reward_type', 'em')
+                else:
+                    data_source = getattr(env_config_inner, 'data_source', '')
+                    reward_type = getattr(env_config_inner, 'reward_type', 'em')
+            
+            env_config_lookup[env_tag] = {
+                'max_tokens': max_tokens,
+                'env_type': env_config.env_type,
+                'max_model_len': getattr(self.config.actor_rollout_ref.rollout, 'max_model_len', None),
+                'data_source': data_source,
+                'reward_type': reward_type
+            }
 
         tags = self.es_cfg.env_configs.tags
         n_groups = self.es_cfg.env_configs.n_groups
@@ -155,6 +276,8 @@ class ContextManager:
         self.env_config_lookup = env_config_lookup
 
     def _parse_response(self, response: str) -> List:
+        # Note: We don't explicitly filter <information> tags - Search-R1 handles this implicitly
+        # by only parsing <search> or <answer> tags and truncating at </search> or </answer>
         pattern = r'<think>(.*?)</think>\s*<answer>(.*?)</answer>' if self.config.agent_proxy.enable_think else r'<answer>(.*?)</answer>'
         match = re.search(pattern, response, re.DOTALL)
         if not match:
@@ -503,7 +626,8 @@ class ContextManager:
                 if max_model_len is None:
                     break
                 token_len = len(self.tokenizer(text_with_prompt, add_special_tokens=False)["input_ids"])
-                if token_len <= max_model_len:
+                # vLLM requires prompt length to be strictly less than max_model_len
+                if token_len < max_model_len:
                     break
                 if len(history) <= 1:
                     logging.error(
@@ -586,12 +710,32 @@ class ContextManager:
             )
         else: # dataproto has textual responses
             responses = lm_outputs.non_tensor_batch['response_texts']
+        # Truncate responses at </search> or </answer> tags (following Search-R1 approach)
+        # This removes any extra tokens generated after the closing tag
+        responses = [
+            resp.split('</search>')[0] + '</search>'
+            if '</search>' in resp 
+            else resp.split('</answer>')[0] + '</answer>'
+            if '</answer>' in resp 
+            else resp
+            for resp in responses
+        ]
+        
         responses = ["<think>" + response if self.config.agent_proxy.enable_think else "<answer>" + response for response in responses] # The LLM generation does not include <think> tags. Add them back here.
             
         env_ids = lm_outputs.non_tensor_batch['env_ids']
         env_inputs = []
         for env_id, response in zip(env_ids, responses):
             llm_response, actions = self._parse_response(response)
+            
+            # For Search environment, pass the entire llm_response as a single action
+            # because the Search environment expects the full response with tags
+            env_config = self.env_config_lookup.get(env_id, {})
+            env_type = env_config.get('env_type', '')
+            if env_type == 'search':
+                # Pass the entire response as a single action for Search environment
+                actions = [llm_response] if llm_response else []
+            
             env_inputs.append({
                 "env_id": env_id,
                 "llm_raw_response": response,
