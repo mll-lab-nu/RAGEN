@@ -168,7 +168,7 @@ def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_re
             response_length = grpo_calculation_mask.size(1)  # Get length from the initial response mask
             grpo_calculation_mask = data.batch["loss_mask"][:, -response_length:]  # This mask is the one intended for GRPO
         # Call compute_grpo_outcome_advantage with parameters matching its definition
-        # Pass episode_ids for deduplication in without_history mode
+        # Pass episode_ids for deduplication in single_turn/limited_multi_turn mode
         episode_ids = data.non_tensor_batch.get("episode_ids", None)
         advantages, returns = compute_grpo_outcome_advantage(
             token_level_rewards=data.batch["token_level_rewards"],
@@ -329,9 +329,10 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             output_ids = test_batch.batch["responses"]
             output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids]
 
-            # Handle without_history mode: group messages by episode
-            without_history = getattr(self.config.agent_proxy, "without_history", False)
-            if without_history and "messages_list" in test_batch.non_tensor_batch:
+            # Handle single_turn/limited_multi_turn mode: group messages by episode
+            context_window_mode = getattr(self.config.agent_proxy, "context_window_mode", "full")
+            is_turn_level_mode = context_window_mode in ("single_turn", "limited_multi_turn")
+            if is_turn_level_mode and "messages_list" in test_batch.non_tensor_batch:
                 # Group samples by episode_id to reconstruct episodes
                 episode_ids = test_batch.non_tensor_batch["episode_ids"]
                 messages_list = test_batch.non_tensor_batch["messages_list"]
@@ -373,8 +374,8 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             reward_tensor = result["reward_tensor"]
             scores = reward_tensor.sum(-1).cpu().tolist()
 
-            # Group scores by episode if without_history mode
-            if without_history and "messages_list" in test_batch.non_tensor_batch:
+            # Group scores by episode if turn-level mode
+            if is_turn_level_mode and "messages_list" in test_batch.non_tensor_batch:
                 grouped_scores = []
                 for gid in unique_groups:
                     indices = group_to_indices[gid]
@@ -392,7 +393,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
             # Get data sources and group if needed
             data_sources_batch = test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0])
-            if without_history and "messages_list" in test_batch.non_tensor_batch:
+            if is_turn_level_mode and "messages_list" in test_batch.non_tensor_batch:
                 # Group data sources by episode
                 grouped_data_sources = [data_sources_batch[group_to_indices[gid][0]] for gid in unique_groups]
                 data_source_lst.append(grouped_data_sources)
@@ -526,9 +527,10 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             outputs = [""] * len(inputs)
             scores = batch.batch["rm_scores"].sum(-1).cpu().tolist()
 
-            # Group by episode if without_history mode
-            without_history = getattr(self.config.agent_proxy, "without_history", False)
-            if without_history and "messages_list" in batch.non_tensor_batch:
+            # Group by episode if turn-level mode
+            context_window_mode = getattr(self.config.agent_proxy, "context_window_mode", "full")
+            is_turn_level_mode = context_window_mode in ("single_turn", "limited_multi_turn")
+            if is_turn_level_mode and "messages_list" in batch.non_tensor_batch:
                 episode_ids = batch.non_tensor_batch["episode_ids"]
                 messages_list = batch.non_tensor_batch["messages_list"]
 

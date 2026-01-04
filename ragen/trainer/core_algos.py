@@ -34,7 +34,7 @@ def compute_grpo_outcome_advantage(
     """
     Compute advantage for GRPO with episode-level deduplication support.
 
-    When episode_ids is provided (for without_history mode), each (index, episode_id) pair
+    When episode_ids is provided (for single_turn/limited_multi_turn mode), each (index, episode_id) pair
     only contributes once to mean/std calculation, avoiding bias from different turn counts.
     """
     scores = token_level_rewards.sum(dim=-1)

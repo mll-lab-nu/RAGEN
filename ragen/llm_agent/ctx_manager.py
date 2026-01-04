@@ -8,7 +8,7 @@ import logging
 
 import torch
 import numpy as np
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Tuple
 from dataclasses import dataclass
 import re
 from verl import DataProto
@@ -234,39 +234,46 @@ class ContextManager:
 
         return score_tensor
 
-    def _build_independent_turn_samples(self, env_outputs: List[Dict]) -> DataProto:
-        """
-        Build independent samples for each turn when without_history=True.
-        Each turn becomes a separate training sample with [system, user, assistant].
-        """
-        llm_input_texts = []
-        messages_list = []
-        env_ids = []
-        group_ids = []
-        episode_ids = []  # Unique ID for each episode
-        episode_rewards = []  # Total episode reward for each sample
-        uid_list = []  # For GRPO grouping
+    def _resolve_max_context_window(self, max_context_window: Optional[int] = None) -> Optional[int]:
+        if max_context_window is None:
+            max_context_window = getattr(self.config.agent_proxy, "max_context_window", 1)
+        if max_context_window is None:
+            return None
+        if max_context_window < 0:
+            return None
+        return int(max_context_window)
 
-        # First pass: collect episode-level rewards for normalization
-        episode_raw_rewards = []
-        episode_group_ids_for_norm = []
-        episode_penalties = []
-        for env_output in env_outputs:
-            if 'state' in env_output['history'][-1]:
-                history = env_output['history'][:-1]
-            else:
-                history = env_output['history']
-            total_reward = sum(turn.get('reward', 0.0) for turn in history)
-            episode_raw_rewards.append(total_reward)
-            episode_group_ids_for_norm.append(env_output["group_id"])
-            episode_penalties.append(env_output.get("penalty", 0))
+    def _get_history_start(self, turn_idx: int, max_context_window: Optional[int]) -> int:
+        if max_context_window is None:
+            return 0
+        return max(0, turn_idx - max_context_window + 1)
 
-        # Apply reward normalization at episode level
+    # ==================== Shared Infrastructure Functions ====================
+
+    def _extract_history(self, env_output: Dict, prepare_for_update: bool) -> List[Dict]:
+        """Extract history from env_output, removing trailing state-only entry for update."""
+        history = env_output['history']
+        if prepare_for_update and history and 'state' in history[-1] and 'llm_response' not in history[-1]:
+            return history[:-1]
+        return history
+
+    def _normalize_episode_rewards(
+        self,
+        env_outputs: List[Dict],
+        episode_raw_rewards: List[float],
+        episode_penalties: List[float],
+    ) -> torch.Tensor:
+        """
+        Normalize episode rewards based on grouping and method config.
+
+        Returns:
+            Tensor of normalized rewards (one per episode)
+        """
         rn_cfg = self.config.agent_proxy.reward_normalization
         grouping, method = rn_cfg.grouping, rn_cfg.method
 
         if grouping == "state":
-            group_tags = episode_group_ids_for_norm
+            group_tags = [env_output["group_id"] for env_output in env_outputs]
         elif grouping == "inductive":
             group_tags = [env_output["tag"] for env_output in env_outputs]
         elif grouping == "batch":
@@ -274,7 +281,6 @@ class ContextManager:
         else:
             raise ValueError(f"Invalid grouping: {grouping}")
 
-        # Build normalization function
         if method == "mean_std":
             norm_func = lambda x: (x - x.mean()) / (x.std() + 1e-6) if x.std().abs() > 1e-6 else torch.zeros_like(x)
         elif method == "mean":
@@ -286,10 +292,9 @@ class ContextManager:
         else:
             raise ValueError(f"Invalid normalization method: {method}")
 
-        # Apply groupwise normalization to episode rewards
         episode_rewards_tensor = torch.tensor(episode_raw_rewards, dtype=torch.float32)
         episode_penalties_tensor = torch.tensor(episode_penalties, dtype=torch.float32)
-        normalized_episode_rewards = episode_rewards_tensor + episode_penalties_tensor
+        normalized = episode_rewards_tensor + episode_penalties_tensor
 
         group2index = {}
         for i, tag in enumerate(group_tags):
@@ -297,89 +302,42 @@ class ContextManager:
                 group2index[tag] = []
             group2index[tag].append(i)
 
-        if len(group2index) < len(env_outputs):  # group size > 1
+        if len(group2index) < len(env_outputs):
             for group, indices in group2index.items():
                 indices_tensor = torch.tensor(indices)
-                normalized_episode_rewards[indices_tensor] = norm_func(normalized_episode_rewards[indices_tensor])
+                normalized[indices_tensor] = norm_func(normalized[indices_tensor])
 
-        # Second pass: build turn samples with normalized rewards
-        for episode_idx, env_output in enumerate(env_outputs):
-            if 'state' in env_output['history'][-1]:
-                history = env_output['history'][:-1]  # Remove last state-only entry
-            else:
-                history = env_output['history']
+        return normalized
 
-            # Use normalized episode reward
-            normalized_reward = normalized_episode_rewards[episode_idx].item()
+    def _tokenize_and_build_tensors(
+        self,
+        texts: List[str]
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Tokenize texts and build input tensors.
 
-            for turn_idx, turn in enumerate(history):
-                if 'llm_response' not in turn:
-                    continue
-
-                # Build independent [system, user, assistant] for this turn
-                messages = [
-                    {"role": "system", "content": "You're a helpful assistant. "},
-                    {"role": "user", "content": self.prefix_lookup[env_output["env_id"]]}
-                ]
-
-                # Add turn info to user message
-                actual_turn = turn_idx + 1
-                FORMAT_PROMPT = "<think> [Your thoughts] </think> <answer> [your answer] </answer>" if self.config.agent_proxy.enable_think else "<answer> [your answer] </answer>"
-                LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_output['env_id']]['max_tokens']} words (tokens)."
-                messages[-1]["content"] += f"\nTurn {actual_turn}:\n"
-                messages[-1]["content"] += f"State:\n{turn['state']}\nYou have {turn['actions_left']} actions left. Always output: {FORMAT_PROMPT} with no extra text. Strictly follow this format. {LENGTH_PROMPT}\n"
-
-                # Add assistant response
-                messages.append({"role": "assistant", "content": turn["llm_response"]})
-
-                # Apply chat template
-                text = self.tokenizer.apply_chat_template(messages, add_generation_prompt=False, tokenize=False)
-
-                llm_input_texts.append(text)
-                messages_list.append(messages)
-                env_ids.append(env_output["env_id"])
-                group_ids.append(env_output["group_id"])
-                episode_ids.append(episode_idx)
-                episode_rewards.append(normalized_reward)
-                uid_list.append(env_output.get("uid", env_output["env_id"]))
-
-        # Tokenize all samples
-        inputs = self.tokenizer(llm_input_texts, return_tensors="pt", padding=True, padding_side="left", truncation=False)
+        Returns:
+            (input_ids, attention_mask, position_ids)
+        """
+        inputs = self.tokenizer(texts, return_tensors="pt", padding=True, padding_side="left", truncation=False)
         input_ids, attention_mask = inputs.input_ids, inputs.attention_mask
         position_ids = (attention_mask.cumsum(dim=-1) - 1).clamp(min=0)
+        return input_ids, attention_mask, position_ids
 
-        # Build score tensor - put episode reward at last token of each sample
-        score_tensor = torch.zeros(input_ids.shape[0], input_ids.shape[1] - 1, dtype=torch.float32)
-        for i, reward in enumerate(episode_rewards):
-            score_tensor[i, -1] = reward
-
-        # Build loss_mask and response_mask for independent samples
-        # For independent samples, we use a simplified mask: only assistant tokens
-        loss_mask = torch.zeros_like(score_tensor)
-        response_mask = torch.zeros_like(score_tensor)
-
-        special_token, _ = get_special_tokens(self.tokenizer)
-        for i in range(input_ids.shape[0]):
-            # Find assistant turn (the last turn in each sample)
-            turn_starts = (input_ids[i] == special_token).nonzero(as_tuple=True)[0]
-            if len(turn_starts) >= 3:  # system, user, assistant
-                assistant_start = turn_starts[2].item()
-                # Shift by 1 for loss computation
-                if assistant_start > 0:
-                    loss_mask[i, assistant_start-1:] = 1
-                    response_mask[i, assistant_start-1:] = 1
-
-        # Remove padding from masks
-        for i in range(input_ids.shape[0]):
-            valid_len = attention_mask[i].sum().item()
-            if valid_len < input_ids.shape[1]:
-                pad_len = input_ids.shape[1] - valid_len
-                loss_mask[i, :pad_len-1] = 0
-                response_mask[i, :pad_len-1] = 0
-
-        response_length = response_mask.sum(dim=-1).float().mean().item()
-
-        # Build DataProto
+    def _build_dataproto(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        position_ids: torch.Tensor,
+        loss_mask: torch.Tensor,
+        score_tensor: torch.Tensor,
+        env_ids: List[int],
+        group_ids: List[int],
+        messages_list: List[List[Dict]],
+        episode_ids: Optional[List[int]] = None,
+        uid_list: Optional[List[Any]] = None,
+    ) -> DataProto:
+        """Build DataProto with common structure for all modes."""
         llm_inputs = DataProto()
         llm_inputs.batch = TensorDict({
             "input_ids": input_ids,
@@ -391,15 +349,25 @@ class ContextManager:
             "original_rm_scores": score_tensor.clone(),
         }, batch_size=input_ids.shape[0])
 
-        llm_inputs.non_tensor_batch = {
+        non_tensor = {
             "env_ids": np.array(env_ids, dtype=int),
             "group_ids": np.array(group_ids, dtype=int),
-            "episode_ids": np.array(episode_ids, dtype=int),
             "messages_list": np.array(messages_list, dtype=object),
-            "uid": np.array(uid_list, dtype=object),
         }
+        if episode_ids is not None:
+            non_tensor["episode_ids"] = np.array(episode_ids, dtype=int)
+        if uid_list is not None:
+            non_tensor["uid"] = np.array(uid_list, dtype=object)
 
-        # Compute metrics
+        llm_inputs.non_tensor_batch = non_tensor
+        return llm_inputs
+
+    def _compute_metrics(
+        self,
+        env_outputs: List[Dict],
+        response_length: float,
+    ) -> Dict[str, float]:
+        """Compute aggregated metrics from env_outputs."""
         metrics = {}
         for env_output in env_outputs:
             for key, value in env_output.get("metrics", {}).items():
@@ -421,162 +389,743 @@ class ContextManager:
                 mean_metrics[non_zero_key] = np.mean(non_zero_values)
 
         mean_metrics["response_length"] = response_length
-        llm_inputs.meta_info = {"metrics": mean_metrics}
+        return mean_metrics
 
-        return llm_inputs
-
-    def get_lm_inputs(self, env_outputs: List[Dict], prepare_for_update: bool) -> DataProto:
+    def _apply_max_length(
+        self,
+        messages: List[Dict],
+        add_generation_prompt: bool = False
+    ) -> List[Dict]:
         """
-        env_outputs - please see below example
-        [
-            {"env_id": 1, "history": [{"state": "###\n#x_#", "llm_response": "Response 1", "reward": 0.5}, {"state": "###\n#x_#"}]},
-            {"env_id": 2, "history": [{"state": "###\n#x_#"}]},
-            ...
+        Token hard truncation, preserving system prompt and current turn.
+        Truncates history from left (oldest turns first).
+
+        Args:
+            messages: Message list [system, user, assistant, user, assistant, ...]
+            add_generation_prompt: Whether to account for generation prompt length
+
+        Returns:
+            Truncated message list
+        """
+        max_length = getattr(self.config.actor_rollout_ref.rollout, "max_model_len", None)
+        if max_length is None:
+            return messages
+
+        # Calculate current length
+        full_text = self.tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=add_generation_prompt,
+            tokenize=False
+        )
+        token_len = len(self.tokenizer(full_text, add_special_tokens=False)["input_ids"])
+
+        if token_len <= max_length:
+            return messages
+
+        # Protect system prompt
+        system_msg = messages[0]
+        conversation = messages[1:]  # [user, assistant, user, assistant, ...]
+
+        while token_len > max_length and len(conversation) > 2:
+            # Detect and remove oldest complete turn
+            if len(conversation) >= 3:
+                # Check for user-assistant-user(reward) pattern
+                if (conversation[0]["role"] == "user" and
+                    conversation[1]["role"] == "assistant" and
+                    len(conversation) > 2 and
+                    conversation[2]["role"] == "user" and
+                    "Reward" in conversation[2].get("content", "")):
+                    # Remove complete turn with reward
+                    conversation = conversation[3:]
+                elif (conversation[0]["role"] == "user" and
+                      conversation[1]["role"] == "assistant"):
+                    # Remove user-assistant pair
+                    conversation = conversation[2:]
+                else:
+                    # Single message removal
+                    conversation = conversation[1:]
+            else:
+                break
+
+            # Recalculate length
+            truncated = [system_msg] + conversation
+            full_text = self.tokenizer.apply_chat_template(
+                truncated,
+                add_generation_prompt=add_generation_prompt,
+                tokenize=False
+            )
+            token_len = len(self.tokenizer(full_text, add_special_tokens=False)["input_ids"])
+
+        if token_len > max_length:
+            logging.warning(
+                f"Cannot truncate to {max_length} tokens (current: {token_len}). "
+                "Single turn may exceed max length."
+            )
+
+        return [system_msg] + conversation
+
+    # ==================== Message Building Functions ====================
+
+    def _build_format_prompt(self, env_id: int) -> Tuple[str, str]:
+        """Build FORMAT_PROMPT and LENGTH_PROMPT for an environment."""
+        FORMAT_PROMPT = (
+            "<think> [Your thoughts] </think> <answer> [your answer] </answer>"
+            if self.config.agent_proxy.enable_think
+            else "<answer> [your answer] </answer>"
+        )
+        LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_id]['max_tokens']} words (tokens)."
+        return FORMAT_PROMPT, LENGTH_PROMPT
+
+    def _build_system_content(self, env_id: int) -> str:
+        env_instruction = self.prefix_lookup.get(env_id, "")
+        if env_instruction:
+            return "You're a helpful assistant. " + env_instruction
+        return "You're a helpful assistant. "
+
+    def _count_tokens(self, text: str) -> int:
+        return len(self.tokenizer(text, add_special_tokens=False)["input_ids"])
+
+    def _build_single_turn_messages(
+        self,
+        env_output: Dict,
+        history: List[Dict],
+        turn_idx: int,
+        history_start: int,
+        turn_offset: int,
+        include_warning: bool,
+        include_assistant: bool,
+    ) -> List[Dict]:
+        messages = [
+            {"role": "system", "content": self._build_system_content(env_output["env_id"])},
+            {"role": "user", "content": ""},
         ]
-        prefix_lookup - from env_id to initial prompt
+        messages[-1]["content"] = self._build_single_turn_user_content(
+            env_output=env_output,
+            history=history,
+            turn_idx=turn_idx,
+            history_start=history_start,
+            turn_offset=turn_offset,
+            include_warning=include_warning,
+        )
+        if include_assistant:
+            messages.append({"role": "assistant", "content": history[turn_idx]["llm_response"]})
+        return messages
+
+    def _fit_single_turn_history_start_to_max_len(
+        self,
+        env_output: Dict,
+        history: List[Dict],
+        turn_idx: int,
+        history_start: int,
+        turn_offset: int,
+        include_warning: bool,
+        include_assistant: bool,
+        add_generation_prompt: bool,
+    ) -> int:
+        max_length = getattr(self.config.actor_rollout_ref.rollout, "max_model_len", None)
+        if max_length is None:
+            return history_start
+
+        while True:
+            messages = self._build_single_turn_messages(
+                env_output=env_output,
+                history=history,
+                turn_idx=turn_idx,
+                history_start=history_start,
+                turn_offset=turn_offset,
+                include_warning=include_warning,
+                include_assistant=include_assistant,
+            )
+            text = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=add_generation_prompt,
+                tokenize=False,
+            )
+            if add_generation_prompt and not include_assistant:
+                if self.config.agent_proxy.enable_think:
+                    text += "<think>"
+                else:
+                    text += "<answer>"
+            token_len = self._count_tokens(text)
+            if token_len <= max_length or history_start >= turn_idx:
+                return history_start
+            history_start += 1
+
+    def _build_turn_state_content(
+        self,
+        turn: Dict,
+        turn_number: int,
+        env_id: int,
+        include_warning: bool = False,
+    ) -> str:
+        """Build state content for a single turn."""
+        FORMAT_PROMPT, LENGTH_PROMPT = self._build_format_prompt(env_id)
+        warning = ""
+        if include_warning and turn.get('manager_invalid_action'):
+            warning = "No valid action provided previously. Environment state remains the same. Please try again.\n"
+
+        content = f"\nTurn {turn_number}:\n"
+        content += (
+            f"State:\n{turn['state']}\n{warning}"
+            f"You have {turn['actions_left']} actions left. Always output: {FORMAT_PROMPT} "
+            f"with no extra text. Strictly follow this format. {LENGTH_PROMPT}\n"
+        )
+        return content
+
+    # ==================== Mask Computation ====================
+
+    def _compute_loss_mask(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        mode: str,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        # Handle without_history mode for training
-        without_history = getattr(self.config.agent_proxy, "without_history", False)
-        if without_history and prepare_for_update:
-            return self._build_independent_turn_samples(env_outputs)
+        Unified loss mask computation for all modes.
 
+        Args:
+            input_ids: Token IDs (batch_size, seq_len)
+            attention_mask: Attention mask (batch_size, seq_len)
+            mode: "single_turn", "limited_multi_turn", or "full"
+
+        Returns:
+            (loss_mask, response_mask): Both (batch_size, seq_len-1)
+        """
+        batch_size, seq_len = input_ids.shape
+        special_token, _ = get_special_tokens(self.tokenizer)
+
+        if mode == "single_turn":
+            # For single_turn, each sample has [system, user, assistant]
+            # Mask only the assistant (last) turn
+            loss_mask = torch.zeros(batch_size, seq_len - 1, dtype=torch.float32)
+            response_mask = torch.zeros(batch_size, seq_len - 1, dtype=torch.float32)
+
+            for i in range(batch_size):
+                turn_starts = (input_ids[i] == special_token).nonzero(as_tuple=True)[0]
+                if len(turn_starts) >= 3:  # system, user, assistant
+                    assistant_start = turn_starts[2].item()
+                    if assistant_start > 0:
+                        loss_mask[i, assistant_start-1:] = 1
+                        response_mask[i, assistant_start-1:] = 1
+
+            # Remove padding from masks
+            for i in range(batch_size):
+                valid_len = attention_mask[i].sum().item()
+                if valid_len < seq_len:
+                    pad_len = seq_len - valid_len
+                    loss_mask[i, :pad_len-1] = 0
+                    response_mask[i, :pad_len-1] = 0
+
+        elif mode == "limited_multi_turn":
+            # Only train the last assistant turn
+            loss_mask = torch.zeros(batch_size, seq_len - 1, dtype=torch.float32)
+            response_mask = torch.zeros(batch_size, seq_len - 1, dtype=torch.float32)
+
+            for i in range(batch_size):
+                turn_starts = (input_ids[i] == special_token).nonzero(as_tuple=True)[0]
+                if len(turn_starts) == 0:
+                    continue
+                # Last assistant is at the last special token position
+                assistant_start = turn_starts[-1].item()
+
+                # For left-padded sequences, valid content ends at seq_len
+                # (not valid_len which is a count, not a position)
+                assistant_end = seq_len
+
+                if assistant_start > 0:
+                    loss_mask[i, assistant_start-1:assistant_end-1] = 1
+                    response_mask[i, assistant_start-1:assistant_end-1] = 1
+
+            # Remove padding from masks (for left-padded sequences)
+            for i in range(batch_size):
+                valid_len = attention_mask[i].sum().item()
+                if valid_len < seq_len:
+                    pad_len = seq_len - valid_len
+                    loss_mask[i, :pad_len-1] = 0
+                    response_mask[i, :pad_len-1] = 0
+
+        else:  # mode == "full"
+            # Use existing logic - all assistant turns are trained
+            turn_starts = torch.where(input_ids == special_token, 1, 0)
+            turn_indicators = torch.cumsum(turn_starts, dim=-1)
+            if self.config.enable_response_mask:
+                loss_mask = (turn_indicators % 2 == 1) & (turn_indicators > 1)
+            else:
+                loss_mask = (turn_indicators > 1)
+            response_mask = (turn_indicators % 2 == 1) & (turn_indicators > 1)
+            loss_mask = loss_mask[:, :-1].float()
+            response_mask = response_mask[:, :-1].float()
+
+        return loss_mask, response_mask
+
+    # ==================== End Mask Computation ====================
+
+    def _build_single_turn_user_content(
+        self,
+        env_output: Dict,
+        history: List[Dict],
+        turn_idx: int,
+        history_start: int,
+        turn_offset: int = 0,
+        include_warning: bool = False,
+    ) -> str:
+        content = ""
+
+        if history_start < turn_idx:
+            completed_steps = turn_idx + turn_offset
+            history_length = turn_idx - history_start
+            content += (
+                f"Summary: {completed_steps} step(s) completed so far. "
+                f"Showing the last {history_length} turn(s) with state/action/reward details. "
+            )
+            content += "Recent turns:\n---\n"
+            for h_idx in range(history_start, turn_idx):
+                actual_turn = h_idx + 1 + turn_offset
+                h_turn = history[h_idx]
+                content += f"Turn {actual_turn} State:\n{h_turn.get('state', '')}\n"
+                content += f"Turn {actual_turn} Action: {h_turn.get('llm_response', '')}\n"
+                if 'reward' in h_turn:
+                    content += f"Turn {actual_turn} Reward: {h_turn['reward']}\n"
+                content += "---\n"
+
+        actual_turn = turn_idx + 1 + turn_offset
+        current_turn_prefix = "Current Turn " if history_start < turn_idx else ""
+        FORMAT_PROMPT = "<think> [Your thoughts] </think> <answer> [your answer] </answer>" if self.config.agent_proxy.enable_think else "<answer> [your answer] </answer>"
+        LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_output['env_id']]['max_tokens']} words (tokens)."
+        warning = ""
+        if include_warning and history[turn_idx].get('manager_invalid_action'):
+            warning = "No valid action provided previously. Environment state remains the same. Please try again.\n"
+
+        separator = "\n" if content else ""
+        content += f"{separator}{current_turn_prefix}(Turn {actual_turn}):\n"
+        content += (
+            f"State:\n{history[turn_idx]['state']}\n{warning}"
+            f"You have {history[turn_idx]['actions_left']} actions left. Always output: {FORMAT_PROMPT} "
+            f"with no extra text. Strictly follow this format. {LENGTH_PROMPT}\n"
+        )
+        return content
+
+    def _build_single_turn_samples(self, env_outputs: List[Dict]) -> DataProto:
+        """
+        Build single-turn samples with optional history context in user prompt.
+        Format: [system, user(with previous k-1 turns history), assistant]
+
+        When max_context_window=1, no previous history is shown.
+        When max_context_window>1, previous turns are included as text in user prompt.
+        """
         llm_input_texts = []
-        messages_list = [] # for api calling
+        messages_list = []
+        env_ids = []
+        group_ids = []
+        episode_ids = []
+        episode_rewards = []
+        uid_list = []
+
+        max_context_window = self._resolve_max_context_window()
+
+        # Collect episode-level rewards for normalization
+        episode_raw_rewards = []
+        episode_penalties = []
         for env_output in env_outputs:
-            if 'state' in env_output['history'][-1] and prepare_for_update:
-                env_output['history'] = env_output['history'][:-1] # when prepare for update, we do not add the state from the n+1 turn to the trajectory
-            
-            max_k = getattr(self.config.agent_proxy, "max_context_window", None)
-            if max_k is not None and isinstance(max_k, int) and max_k > 0:
-                env_output['history'] = env_output['history'][-max_k:]
-            
-            max_model_len = getattr(self.config.actor_rollout_ref.rollout, "max_model_len", None)
-            history = env_output['history']
-            truncated = False
+            history = self._extract_history(env_output, prepare_for_update=True)
+            total_reward = sum(turn.get('reward', 0.0) for turn in history)
+            episode_raw_rewards.append(total_reward)
+            episode_penalties.append(env_output.get("penalty", 0))
 
-            # Handle without_history mode for sampling
-            without_history = getattr(self.config.agent_proxy, "without_history", False)
-            turn_offset = 0
-            if without_history and not prepare_for_update:
-                # For sampling: only use current turn but keep actual turn number
-                turn_offset = len(history) - 1
-                history = history[-1:] if history else []
+        # Apply reward normalization
+        normalized_episode_rewards = self._normalize_episode_rewards(
+            env_outputs, episode_raw_rewards, episode_penalties
+        )
 
-            while True:
+        # Build turn samples
+        for episode_idx, env_output in enumerate(env_outputs):
+            history = self._extract_history(env_output, prepare_for_update=True)
+            normalized_reward = normalized_episode_rewards[episode_idx].item()
+
+            for turn_idx, turn in enumerate(history):
+                if 'llm_response' not in turn:
+                    continue
+
                 messages = [
-                    {"role": "system", "content": "You're a helpful assistant. "}, 
-                    {"role": "user", "content": self.prefix_lookup[env_output["env_id"]]}
+                    {"role": "system", "content": self._build_system_content(env_output["env_id"])},
+                    {"role": "user", "content": ""}
                 ]
 
-                for idx, content in enumerate(history):
-                    actual_turn = idx + 1 + turn_offset
-                    messages[-1]["content"] += f"\nTurn {actual_turn}:\n"
-                    if "state" in content:
-                        FORMAT_PROMPT = "<think> [Your thoughts] </think> <answer> [your answer] </answer>" if self.config.agent_proxy.enable_think else "<answer> [your answer] </answer>"
-                        LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_output['env_id']]['max_tokens']} words (tokens)."
-                        warning = ""
-                        if content.get('manager_invalid_action'):
-                            warning = "No valid action provided previously. Environment state remains the same. Please try again.\n"
-                        messages[-1]["content"] += (
-                            f"State:\n{content['state']}\n{warning}"
-                            f"You have {content['actions_left']} actions left. Always output: {FORMAT_PROMPT} "
-                            f"with no extra text. Strictly follow this format. {LENGTH_PROMPT}\n"
-                        )
-                    if "llm_response" in content:
-                        messages.append({"role": "assistant", "content": content["llm_response"]})
-                    if "reward" in content and not (prepare_for_update and idx == len(history) - 1):
-                        messages.append({"role": "user", "content": f"Reward:\n{content['reward']}\n"})
-
-
-                # NOTE: this assertion is important for loss mask computation        
-                assert all(msg["role"] == "assistant" for msg in messages[2::2])
-
-                text = self.tokenizer.apply_chat_template(messages, add_generation_prompt=(not prepare_for_update), tokenize=False)
-                if not prepare_for_update:
-                    if self.config.agent_proxy.enable_think:
-                        text_with_prompt = text + "<think>"
-                    else:
-                        text_with_prompt = text + "<answer>"
-                else:
-                    text_with_prompt = text
-
-                if max_model_len is None:
-                    break
-                token_len = len(self.tokenizer(text_with_prompt, add_special_tokens=False)["input_ids"])
-                if token_len <= max_model_len:
-                    break
-                if len(history) <= 1:
-                    logging.error(
-                        "The model in env %s has exceeded max_model_len %d in one turn (%d tokens). Please try to increase max_model_len.",
-                        env_output["env_id"], max_model_len, token_len,
-                    )
-                    break
-                history = history[1:]
-                truncated = True
-
-            if truncated:
-                env_output['history'] = history
-                logging.warning(
-                    "Truncated history for env %s to keep prompt within %d tokens (current %d).",
-                    env_output["env_id"], max_model_len, token_len,
+                history_start = self._get_history_start(turn_idx, max_context_window)
+                history_start = self._fit_single_turn_history_start_to_max_len(
+                    env_output=env_output,
+                    history=history,
+                    turn_idx=turn_idx,
+                    history_start=history_start,
+                    turn_offset=0,
+                    include_warning=False,
+                    include_assistant=True,
+                    add_generation_prompt=False,
+                )
+                messages = self._build_single_turn_messages(
+                    env_output=env_output,
+                    history=history,
+                    turn_idx=turn_idx,
+                    history_start=history_start,
+                    turn_offset=0,
+                    include_warning=False,
+                    include_assistant=True,
                 )
 
-            llm_input_texts.append(text_with_prompt)
+                text = self.tokenizer.apply_chat_template(messages, add_generation_prompt=False, tokenize=False)
+
+                llm_input_texts.append(text)
+                messages_list.append(messages)
+                env_ids.append(env_output["env_id"])
+                group_ids.append(env_output["group_id"])
+                episode_ids.append(episode_idx)
+                episode_rewards.append(normalized_reward)
+                uid_list.append(env_output.get("uid", env_output["env_id"]))
+
+        # Tokenize
+        input_ids, attention_mask, position_ids = self._tokenize_and_build_tensors(llm_input_texts)
+
+        # Build score tensor
+        score_tensor = torch.zeros(input_ids.shape[0], input_ids.shape[1] - 1, dtype=torch.float32)
+        for i, reward in enumerate(episode_rewards):
+            score_tensor[i, -1] = reward
+
+        # Compute loss mask
+        loss_mask, response_mask = self._compute_loss_mask(
+            input_ids, attention_mask, mode="single_turn"
+        )
+
+        response_length = response_mask.sum(dim=-1).float().mean().item()
+
+        # Build DataProto
+        llm_inputs = self._build_dataproto(
+            input_ids, attention_mask, position_ids, loss_mask, score_tensor,
+            env_ids, group_ids, messages_list, episode_ids, uid_list
+        )
+
+        llm_inputs.meta_info = {"metrics": self._compute_metrics(env_outputs, response_length)}
+        return llm_inputs
+
+    def _build_limited_multi_turn_samples(self, env_outputs: List[Dict]) -> DataProto:
+        """
+        Build multi-turn samples with limited context window.
+        Format: [system, user, assistant] × k, but only train the last assistant.
+
+        Each sample contains up to k turns of conversation, but only the last
+        assistant response is included in loss computation.
+        """
+        llm_input_texts = []
+        messages_list = []
+        env_ids = []
+        group_ids = []
+        episode_ids = []
+        episode_rewards = []
+        uid_list = []
+
+        max_context_window = self._resolve_max_context_window()
+
+        # Collect episode-level rewards for normalization
+        episode_raw_rewards = []
+        episode_penalties = []
+        for env_output in env_outputs:
+            history = self._extract_history(env_output, prepare_for_update=True)
+            total_reward = sum(turn.get('reward', 0.0) for turn in history)
+            episode_raw_rewards.append(total_reward)
+            episode_penalties.append(env_output.get("penalty", 0))
+
+        # Apply reward normalization
+        normalized_episode_rewards = self._normalize_episode_rewards(
+            env_outputs, episode_raw_rewards, episode_penalties
+        )
+
+        # Build multi-turn samples
+        for episode_idx, env_output in enumerate(env_outputs):
+            history = self._extract_history(env_output, prepare_for_update=True)
+            normalized_reward = normalized_episode_rewards[episode_idx].item()
+
+            for turn_idx, turn in enumerate(history):
+                if 'llm_response' not in turn:
+                    continue
+
+                messages = [
+                    {"role": "system", "content": self._build_system_content(env_output["env_id"])},
+                    {"role": "user", "content": ""}
+                ]
+
+                history_start = self._get_history_start(turn_idx, max_context_window)
+                # Add all turns from history_start to turn_idx (inclusive)
+                for h_idx in range(history_start, turn_idx + 1):
+                    h_turn = history[h_idx]
+                    actual_turn = h_idx + 1
+
+                    # Add turn state using helper
+                    messages[-1]["content"] += self._build_turn_state_content(
+                        h_turn, actual_turn, env_output["env_id"]
+                    )
+
+                    # Add assistant response
+                    messages.append({"role": "assistant", "content": h_turn["llm_response"]})
+
+                    # Add reward for non-final turns
+                    if h_idx < turn_idx and 'reward' in h_turn:
+                        messages.append({"role": "user", "content": f"Reward:\n{h_turn['reward']}\n"})
+
+                # Apply max length truncation
+                messages = self._apply_max_length(messages, add_generation_prompt=False)
+
+                text = self.tokenizer.apply_chat_template(messages, add_generation_prompt=False, tokenize=False)
+
+                llm_input_texts.append(text)
+                messages_list.append(messages)
+                env_ids.append(env_output["env_id"])
+                group_ids.append(env_output["group_id"])
+                episode_ids.append(episode_idx)
+                episode_rewards.append(normalized_reward)
+                uid_list.append(env_output.get("uid", env_output["env_id"]))
+
+        # Tokenize
+        input_ids, attention_mask, position_ids = self._tokenize_and_build_tensors(llm_input_texts)
+
+        # Build score tensor
+        score_tensor = torch.zeros(input_ids.shape[0], input_ids.shape[1] - 1, dtype=torch.float32)
+        for i, reward in enumerate(episode_rewards):
+            score_tensor[i, -1] = reward
+
+        # Compute loss mask (only last assistant)
+        loss_mask, response_mask = self._compute_loss_mask(
+            input_ids, attention_mask, mode="limited_multi_turn"
+        )
+
+        response_length = response_mask.sum(dim=-1).float().mean().item()
+
+        # Build DataProto
+        llm_inputs = self._build_dataproto(
+            input_ids, attention_mask, position_ids, loss_mask, score_tensor,
+            env_ids, group_ids, messages_list, episode_ids, uid_list
+        )
+
+        llm_inputs.meta_info = {"metrics": self._compute_metrics(env_outputs, response_length)}
+        return llm_inputs
+
+    def _build_samples_full(self, env_outputs: List[Dict]) -> DataProto:
+        """
+        Build full multi-turn samples for update (original behavior).
+        All assistant turns are trained.
+        """
+        llm_input_texts = []
+        messages_list = []
+
+        for env_output in env_outputs:
+            history = self._extract_history(env_output, prepare_for_update=True)
+            messages = [
+                {"role": "system", "content": self._build_system_content(env_output["env_id"])},
+                {"role": "user", "content": ""}
+            ]
+
+            for idx, content in enumerate(history):
+                actual_turn = idx + 1
+                if "state" in content:
+                    messages[-1]["content"] += self._build_turn_state_content(
+                        content, actual_turn, env_output["env_id"]
+                    )
+                if "llm_response" in content:
+                    messages.append({"role": "assistant", "content": content["llm_response"]})
+                if "reward" in content and idx < len(history) - 1:
+                    messages.append({"role": "user", "content": f"Reward:\n{content['reward']}\n"})
+
+            # Apply max length truncation
+            messages = self._apply_max_length(messages, add_generation_prompt=False)
+
+            text = self.tokenizer.apply_chat_template(messages, add_generation_prompt=False, tokenize=False)
+            llm_input_texts.append(text)
             messages_list.append(messages)
 
-        inputs = self.tokenizer(llm_input_texts, return_tensors="pt", padding=True, padding_side="left", truncation=False) # We have truncated previously, truncation in tokenizer may cause issues.
-        input_ids, attention_mask = inputs.input_ids, inputs.attention_mask
-        position_ids = (attention_mask.cumsum(dim=-1) - 1).clamp(min=0)
-        if prepare_for_update:
-            scores = [[i.get('reward', 0.0) for i in env_output['history']] for env_output in env_outputs]
-            score_tensor, loss_mask, response_mask = get_masks_and_scores(input_ids, self.tokenizer, scores, use_turn_scores=self.config.agent_proxy.use_turn_scores, enable_response_mask=self.config.enable_response_mask)
+        # Tokenize
+        input_ids, attention_mask, position_ids = self._tokenize_and_build_tensors(llm_input_texts)
 
-            normalized_score_tensor = score_tensor
-            if not self.config.agent_proxy.use_turn_scores:
-                normalized_score_tensor = self._normalize_score_tensor(score_tensor, env_outputs)
-            response_length = response_mask.sum(dim=-1).float().mean().item()
+        # Build scores using existing logic
+        scores = [[i.get('reward', 0.0) for i in self._extract_history(env_output, True)] for env_output in env_outputs]
+        score_tensor, loss_mask, response_mask = get_masks_and_scores(
+            input_ids, self.tokenizer, scores,
+            use_turn_scores=self.config.agent_proxy.use_turn_scores,
+            enable_response_mask=self.config.enable_response_mask
+        )
 
+        # Normalize scores
+        if not self.config.agent_proxy.use_turn_scores:
+            score_tensor = self._normalize_score_tensor(score_tensor, env_outputs)
+
+        response_length = response_mask.sum(dim=-1).float().mean().item()
+
+        # Build DataProto
         llm_inputs = DataProto()
         llm_inputs.batch = TensorDict({
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "position_ids": position_ids,
-            "responses": input_ids[:, 1:], # remove the first token
+            "responses": input_ids[:, 1:],
+            "loss_mask": loss_mask,
+            "rm_scores": score_tensor,
+            "original_rm_scores": score_tensor.clone(),
         }, batch_size=input_ids.shape[0])
 
-        if prepare_for_update:
-            llm_inputs.batch["loss_mask"] = loss_mask # remove the first token
-            llm_inputs.batch["rm_scores"] = normalized_score_tensor # remove the first token
-            llm_inputs.batch["original_rm_scores"] = score_tensor # remove the first token
         llm_inputs.non_tensor_batch = {
             "env_ids": np.array([env_output["env_id"] for env_output in env_outputs], dtype=int),
             "group_ids": np.array([env_output["group_id"] for env_output in env_outputs], dtype=int),
             "messages_list": np.array(messages_list, dtype=object),
         }
 
-        if prepare_for_update:
-            metrics = {}
-            for env_output in env_outputs:
-                for key, value in env_output["metrics"].items():
-                    if key not in metrics:
-                        metrics[key] = []
-                    metrics[key].append(value)
-            mean_metrics = {
-                key: np.sum(value) / self.env_nums[key.split("/")[0]]
-                for key, value in metrics.items()
-            }
-            for key, values in metrics.items():
-                if not isinstance(values, list):
-                    continue
-                prefix, suffix = key.split("/", 1)
-                non_zero_values = [v for v in values if v != 0]
-                if non_zero_values:  # Avoid division by zero
-                    non_zero_key = f"{prefix}/non-zero/{suffix}"
-                    mean_metrics[non_zero_key] = np.mean(non_zero_values)
-            metrics = mean_metrics
-            metrics["response_length"] = response_length
-            llm_inputs.meta_info = {"metrics": metrics}
+        llm_inputs.meta_info = {"metrics": self._compute_metrics(env_outputs, response_length)}
         return llm_inputs
+
+    def _build_infer_samples(self, env_outputs: List[Dict]) -> DataProto:
+        """Build samples for inference (generation)."""
+        context_window_mode = getattr(self.config.agent_proxy, "context_window_mode", "full")
+        resolved_max_context_window = self._resolve_max_context_window()
+
+        llm_input_texts = []
+        messages_list = []
+
+        for env_output in env_outputs:
+            history = env_output['history']
+
+            # Apply context window for non-full modes
+            turn_offset = 0
+            if context_window_mode in ("single_turn", "limited_multi_turn"):
+                if resolved_max_context_window is not None and resolved_max_context_window > 0:
+                    if len(history) > resolved_max_context_window:
+                        turn_offset = len(history) - resolved_max_context_window
+                        history = history[-resolved_max_context_window:]
+
+            if context_window_mode == "single_turn":
+                messages = self._build_infer_single_turn_messages(
+                    env_output, history, turn_offset, resolved_max_context_window
+                )
+            else:  # full or limited_multi_turn
+                messages = self._build_infer_multi_turn_messages(
+                    env_output, history, turn_offset
+                )
+
+            # Apply max length truncation
+            messages = self._apply_max_length(messages, add_generation_prompt=True)
+
+            text = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+
+            # Add generation prompt prefix
+            if self.config.agent_proxy.enable_think:
+                text = text + "<think>"
+            else:
+                text = text + "<answer>"
+
+            llm_input_texts.append(text)
+            messages_list.append(messages)
+
+        # Tokenize
+        input_ids, attention_mask, position_ids = self._tokenize_and_build_tensors(llm_input_texts)
+
+        llm_inputs = DataProto()
+        llm_inputs.batch = TensorDict({
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
+            "responses": input_ids[:, 1:],
+        }, batch_size=input_ids.shape[0])
+
+        llm_inputs.non_tensor_batch = {
+            "env_ids": np.array([env_output["env_id"] for env_output in env_outputs], dtype=int),
+            "group_ids": np.array([env_output["group_id"] for env_output in env_outputs], dtype=int),
+            "messages_list": np.array(messages_list, dtype=object),
+        }
+
+        return llm_inputs
+
+    def _build_infer_single_turn_messages(
+        self,
+        env_output: Dict,
+        history: List[Dict],
+        turn_offset: int,
+        max_context_window: Optional[int],
+    ) -> List[Dict]:
+        """Build messages for single_turn inference."""
+        messages = [
+            {"role": "system", "content": self._build_system_content(env_output["env_id"])},
+            {"role": "user", "content": ""},
+        ]
+        if not history:
+            return messages
+
+        turn_idx = len(history) - 1
+        history_start = self._get_history_start(turn_idx, max_context_window)
+        history_start = self._fit_single_turn_history_start_to_max_len(
+            env_output=env_output,
+            history=history,
+            turn_idx=turn_idx,
+            history_start=history_start,
+            turn_offset=turn_offset,
+            include_warning=True,
+            include_assistant=False,
+            add_generation_prompt=True,
+        )
+        messages = self._build_single_turn_messages(
+            env_output=env_output,
+            history=history,
+            turn_idx=turn_idx,
+            history_start=history_start,
+            turn_offset=turn_offset,
+            include_warning=True,
+            include_assistant=False,
+        )
+        return messages
+
+    def _build_infer_multi_turn_messages(
+        self,
+        env_output: Dict,
+        history: List[Dict],
+        turn_offset: int,
+    ) -> List[Dict]:
+        """Build messages for multi-turn inference (full or limited_multi_turn)."""
+        messages = [
+            {"role": "system", "content": self._build_system_content(env_output["env_id"])},
+            {"role": "user", "content": ""}
+        ]
+
+        for idx, content in enumerate(history):
+            actual_turn = idx + 1 + turn_offset
+            if "state" in content:
+                messages[-1]["content"] += self._build_turn_state_content(
+                    content, actual_turn, env_output["env_id"], include_warning=True
+                )
+            if "llm_response" in content:
+                messages.append({"role": "assistant", "content": content["llm_response"]})
+            if "reward" in content:
+                messages.append({"role": "user", "content": f"Reward:\n{content['reward']}\n"})
+
+        return messages
+
+    def get_lm_inputs(self, env_outputs: List[Dict], prepare_for_update: bool) -> DataProto:
+        """
+        Main entry point for building LLM inputs.
+
+        Args:
+            env_outputs: List of environment outputs with history
+            prepare_for_update: True for training data, False for inference
+
+        Returns:
+            DataProto with tokenized inputs and metadata
+        """
+        context_window_mode = getattr(self.config.agent_proxy, "context_window_mode", "full")
+
+        if prepare_for_update:
+            # Training: dispatch to mode-specific builders
+            if context_window_mode == "single_turn":
+                return self._build_single_turn_samples(env_outputs)
+            elif context_window_mode == "limited_multi_turn":
+                return self._build_limited_multi_turn_samples(env_outputs)
+            else:  # full
+                return self._build_samples_full(env_outputs)
+        else:
+            # Inference: build prompts for generation
+            return self._build_infer_samples(env_outputs)
 
     def get_env_inputs(self, lm_outputs: DataProto) -> List[Dict]:
         if lm_outputs.batch is not None and 'responses' in lm_outputs.batch.keys():
@@ -604,67 +1153,217 @@ class ContextManager:
         llm_inputs = self.get_lm_inputs(env_outputs, prepare_for_update=True)
         return llm_inputs
 
-    
 
+def main():
+    """Test all context window modes and verify refactoring correctness."""
+    import copy
+    from omegaconf import OmegaConf
 
+    # Create minimal config for testing
+    config = OmegaConf.create({
+        "actor_rollout_ref": {
+            "model": {"path": "Qwen/Qwen2.5-0.5B-Instruct"},
+            "rollout": {
+                "response_length": 400,
+                "max_model_len": 3600,
+            }
+        },
+        "agent_proxy": {
+            "context_window_mode": "full",
+            "max_context_window": -1,
+            "action_sep": "||",
+            "max_actions_per_turn": 2,
+            "enable_think": True,
+            "use_turn_scores": False,
+            "reward_normalization": {
+                "grouping": "state",
+                "method": "identity"
+            }
+        },
+        "es_manager": {
+            "train": {
+                "env_groups": 8,
+                "group_size": 16,
+                "env_configs": {
+                    "tags": ["CoordSokoban"],
+                    "n_groups": [8]
+                }
+            }
+        },
+        "custom_envs": {
+            "CoordSokoban": {
+                "env_type": "sokoban",
+                "env_instruction": "Solve this Sokoban puzzle.",
+                "max_tokens": 400,
+                "max_actions_per_traj": 10,
+                "action_lookup": {"0": "up", "1": "down", "2": "left", "3": "right"}
+            }
+        },
+        "enable_response_mask": True
+    })
 
-@hydra.main(version_base = None, config_path = "../../config", config_name = "base")
-def main(config):
-    import json
     tokenizer = AutoTokenizer.from_pretrained(config.actor_rollout_ref.model.path)
-    ctx_manager = ContextManager(config=config, tokenizer=tokenizer)
-    print("ctx_manager prefix", ctx_manager.prefix_lookup)
-    # batch_list = [
-    #     {
-    #         "env_ids": 0,
-    #         "chat_response": "<think><think></answer> 123. </think><answer> <answer> say | hi </answer></answer>",
-    #     },
-    #     {
-    #         "env_ids": 1,
-    #         "chat_response": "<think> 456. </think><answer> 789 </answer><think> 10123 </think><answer> 11111 </answer>",
-    #     }
-    # ]
-    # ctx_manager.action_sep_lookup = {
-    #     0: "|",
-    #     1: ";"
-    # }
-    # for item in batch_list:
-    #     item["responses"] = tokenizer.encode(item["chat_response"], return_tensors="pt",max_length=512, truncation=True,padding="max_length")[0]
-    # batch_dict = collate_fn(batch_list)
-    # batch = DataProto.from_single_dict(batch_dict)
-    # env_inputs = ctx_manager.get_env_inputs(batch)
-    # print(env_inputs)
-    
 
-
-    env_outputs = [
+    # Test data: 2 episodes with multi-turn history
+    env_outputs_base = [
+        {
+            "env_id": 0,
+            "history": [
+                {"state": "State 1", "llm_response": "<think>Think 1</think><answer>Action 1</answer>", "reward": 0.5, "actions_left": 3},
+                {"state": "State 2", "llm_response": "<think>Think 2</think><answer>Action 2</answer>", "reward": 0.8, "actions_left": 2},
+                {"state": "State 3", "llm_response": "<think>Think 3</think><answer>Action 3</answer>", "reward": 1.0, "actions_left": 1},
+                {"state": "State 4", "actions_left": 0}  # Final state, no response
+            ],
+            "group_id": 0,
+            "tag": "CoordSokoban",
+            "metrics": {"CoordSokoban/success": 1}
+        },
         {
             "env_id": 1,
             "history": [
-                {"state": "###\n#x_#<image>", "llm_response": "Response 1", "reward": 0.5, "actions_left": 2},
-                {"state": "###\n#x_#<image>", "llm_response": "Response 2", "reward": 0.8, "actions_left": 1},
-                {"state": "###\n#x_#<image>", "actions_left": 0}
+                {"state": "State A", "llm_response": "<think>Think A</think><answer>Action A</answer>", "reward": 0.3, "actions_left": 2},
+                {"state": "State B", "llm_response": "<think>Think B</think><answer>Action B</answer>", "reward": 0.6, "actions_left": 1},
+                {"state": "State C", "actions_left": 0}
             ],
             "group_id": 0,
-            "metrics": {}
-        },
-        {
-            "env_id": 2,
-            "history": [
-                {"state": "###\n#x_#<image>", "llm_response": "Response 3", "reward": 0.3, "actions_left": 1},
-                {"state": "###\n#x_#<image>", "actions_left": 0}
-            ],
-            "group_id": 1,
-            "metrics": {}
+            "tag": "CoordSokoban",
+            "metrics": {"CoordSokoban/success": 0}
         }
     ]
-    
-    prefix_lookup = {1: "Initial prompt", 2: "Initial prompt 2"}
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
-    env_prompt = ctx_manager.get_lm_inputs(env_outputs, prepare_for_update=False)
-    print(env_prompt)
-    formulate_rollouts_rst= ctx_manager.formulate_rollouts(env_outputs)
-    print(formulate_rollouts_rst)
+
+    def test_mode(mode_name, max_context_window, config):
+        """Test a specific context window mode."""
+        print(f"\n{'='*60}")
+        print(f"Testing mode: {mode_name}, max_context_window: {max_context_window}")
+        print('='*60)
+
+        # Update config
+        config.agent_proxy.context_window_mode = mode_name
+        config.agent_proxy.max_context_window = max_context_window
+
+        ctx_manager = ContextManager(config=config, tokenizer=tokenizer)
+        env_outputs = copy.deepcopy(env_outputs_base)
+
+        # Test 1: prepare_for_update=True (training)
+        print("\n--- Test: prepare_for_update=True (Training) ---")
+        result_update = ctx_manager.get_lm_inputs(env_outputs, prepare_for_update=True)
+
+        print(f"Batch size: {result_update.batch['input_ids'].shape[0]}")
+        print(f"Sequence length: {result_update.batch['input_ids'].shape[1]}")
+        print(f"Has loss_mask: {'loss_mask' in result_update.batch.keys()}")
+        print(f"Has rm_scores: {'rm_scores' in result_update.batch.keys()}")
+
+        if 'episode_ids' in result_update.non_tensor_batch:
+            print(f"Episode IDs: {result_update.non_tensor_batch['episode_ids']}")
+
+        # Check loss_mask is valid
+        loss_mask = result_update.batch['loss_mask']
+        print(f"Loss mask sum per sample: {loss_mask.sum(dim=-1).tolist()}")
+
+        # Decode first sample to verify format
+        first_text = tokenizer.decode(result_update.batch['input_ids'][0], skip_special_tokens=False)
+        print(f"\nFirst sample preview (first 500 chars):\n{first_text[:500]}...")
+
+        # Test 2: prepare_for_update=False (inference)
+        print("\n--- Test: prepare_for_update=False (Inference) ---")
+        env_outputs_infer = copy.deepcopy(env_outputs_base)
+        result_infer = ctx_manager.get_lm_inputs(env_outputs_infer, prepare_for_update=False)
+
+        print(f"Batch size: {result_infer.batch['input_ids'].shape[0]}")
+        print(f"Sequence length: {result_infer.batch['input_ids'].shape[1]}")
+
+        # Decode first sample
+        first_text_infer = tokenizer.decode(result_infer.batch['input_ids'][0], skip_special_tokens=False)
+        print(f"\nFirst infer sample preview (first 500 chars):\n{first_text_infer[:500]}...")
+
+        # Verify generation prompt is added
+        assert "<think>" in first_text_infer or "<answer>" in first_text_infer, \
+            "Generation prompt should be added for inference"
+
+        print(f"\n✓ Mode {mode_name} with k={max_context_window} passed!")
+        return result_update, result_infer
+
+    # Test all three modes
+    print("\n" + "="*80)
+    print("CONTEXT WINDOW MODE TESTS")
+    print("="*80)
+
+    # Test 1: Full mode
+    result_full_update, result_full_infer = test_mode("full", -1, config)
+
+    # Test 2: Single-turn mode with k=2
+    result_st_update, result_st_infer = test_mode("single_turn", 2, config)
+
+    # Test 3: Single-turn mode with k=1 (no history)
+    result_st1_update, result_st1_infer = test_mode("single_turn", 1, config)
+
+    # Test 4: Limited multi-turn mode with k=2
+    result_lmt_update, result_lmt_infer = test_mode("limited_multi_turn", 2, config)
+
+    # Test 5: Limited multi-turn mode with k=3
+    result_lmt3_update, result_lmt3_infer = test_mode("limited_multi_turn", 3, config)
+
+    # Verify different modes produce different results
+    print("\n" + "="*80)
+    print("CROSS-MODE VERIFICATION")
+    print("="*80)
+
+    # Full mode should have fewer samples than turn-level modes
+    # (full mode: 1 sample per episode, turn-level: 1 sample per turn)
+    print(f"\nFull mode samples: {result_full_update.batch['input_ids'].shape[0]}")
+    print(f"Single-turn mode samples: {result_st_update.batch['input_ids'].shape[0]}")
+    print(f"Limited multi-turn mode samples: {result_lmt_update.batch['input_ids'].shape[0]}")
+
+    # Turn-level modes should have more samples (one per turn)
+    assert result_st_update.batch['input_ids'].shape[0] > result_full_update.batch['input_ids'].shape[0], \
+        "Single-turn mode should have more samples than full mode"
+
+    print("\n✓ All cross-mode verifications passed!")
+
+    # Test shared infrastructure functions
+    print("\n" + "="*80)
+    print("SHARED INFRASTRUCTURE TESTS")
+    print("="*80)
+
+    ctx_manager = ContextManager(config=config, tokenizer=tokenizer)
+
+    # Test _extract_history
+    env_output = copy.deepcopy(env_outputs_base[0])
+    history_update = ctx_manager._extract_history(env_output, prepare_for_update=True)
+    history_infer = ctx_manager._extract_history(env_output, prepare_for_update=False)
+    print(f"\n_extract_history (update): {len(history_update)} turns")
+    print(f"_extract_history (infer): {len(history_infer)} turns")
+    assert len(history_update) == 3, "Update should remove final state-only turn"
+    assert len(history_infer) == 4, "Infer should keep all turns"
+    print("✓ _extract_history passed!")
+
+    # Test _normalize_episode_rewards
+    raw_rewards = [1.0, 2.0, 3.0, 4.0]
+    penalties = [0.0, 0.0, 0.0, 0.0]
+    test_env_outputs = [{"group_id": 0, "tag": "test"} for _ in range(4)]
+    normalized = ctx_manager._normalize_episode_rewards(test_env_outputs, raw_rewards, penalties)
+    print(f"\n_normalize_episode_rewards: {raw_rewards} -> {normalized.tolist()}")
+    print("✓ _normalize_episode_rewards passed!")
+
+    # Test _apply_max_length
+    long_messages = [
+        {"role": "system", "content": "System prompt"},
+        {"role": "user", "content": "User 1 " * 100},
+        {"role": "assistant", "content": "Assistant 1"},
+        {"role": "user", "content": "Reward: 0.5"},
+        {"role": "assistant", "content": "Assistant 2"},
+        {"role": "user", "content": "Reward: 0.8"},
+        {"role": "assistant", "content": "Final response"},
+    ]
+    original_len = len(long_messages)
+    truncated = ctx_manager._apply_max_length(long_messages, add_generation_prompt=False)
+    print(f"\n_apply_max_length: {original_len} messages -> {len(truncated)} messages")
+    assert truncated[0]["role"] == "system", "System prompt should be preserved"
+    print("✓ _apply_max_length passed!")
+
+    print("\n" + "="*80)
+    print("ALL TESTS PASSED!")
+    print("="*80)
 
 if __name__ == "__main__":
     main()
