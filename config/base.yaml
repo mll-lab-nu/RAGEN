@@ -1,5 +1,5 @@
 defaults:
-  - ppo_trainer # this is a symbolic link to the verl/verl/trainer/config/ppo_trainer.yaml file
+  - ppo_trainer
   - envs
 
 system:
@@ -44,6 +44,7 @@ actor_rollout_ref:
     log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
   rollout:
     name: vllm
+    load_format: auto  # load from huggingface instead of dummy (random init)
     log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
     tensor_model_parallel_size: 1
     max_model_len: 3600
@@ -99,7 +100,7 @@ trainer:
   val_before_train: True
   n_gpus_per_node: 1
   test_freq: 10
-  generations_to_log_to_wandb: 
+  generations_to_log_to_wandb:
     val: 20
   logger: [ 'console', 'wandb' ]
   max_actor_ckpt_to_keep: 1

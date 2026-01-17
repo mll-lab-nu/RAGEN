@@ -2,6 +2,10 @@ defaults:
   - envs
   - base
 
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
 system:
   CUDA_VISIBLE_DEVICES: "0"
 
