@@ -20,6 +20,8 @@ class RolloutFilterConfig:
     group_size: int
     num_groups: int
     metric: str = "reward_variance"
+    lower_ratio: Optional[float] = None
+    include_zero: bool = True
 
 
 class RolloutFilter:
@@ -48,20 +50,43 @@ class RolloutFilter:
         return self.config.num_groups
 
     def _select_top_groups(self, scores: torch.Tensor) -> torch.Tensor:
+        # Convert to float for safety with epsilon
+        scores = scores.float()
+        indices = torch.arange(self.num_groups, device=scores.device)
+
+        # Handle zero exclusion
+        # lower_ratio always excludes zero. include_zero can be set to False to exclude zeros generally.
+        if not self.config.include_zero or self.config.lower_ratio is not None:
+            non_zero_mask = (torch.abs(scores) > 1e-10)
+            scores = scores[non_zero_mask]
+            indices = indices[non_zero_mask]
+            
+            if indices.numel() == 0:
+                return torch.tensor([], dtype=torch.long, device=scores.device)
+
+        # Handle lower_ratio selection
+        if self.config.lower_ratio is not None:
+            k = max(int(self.config.lower_ratio * indices.numel()), 1)
+            # topk with largest=False gives the smallest values
+            topk_res = scores.topk(k, largest=False)
+            return indices[topk_res.indices]
+
+        # Regular ratio logic
         rollout_filter_ratio = self.ratio
         if rollout_filter_ratio >= 1:
-            return torch.arange(self.num_groups, device=scores.device)
+            return indices
 
-        k = max(int(rollout_filter_ratio * self.num_groups), 1)
+        k = max(int(rollout_filter_ratio * indices.numel()), 1)
 
         if self.filter_type == "smallest":
-            top_groups = (-scores).topk(k).indices
+            # topk with largest=False would be cleaner but preserving original logic style
+            top_groups_local_indices = (-scores).topk(k).indices
         elif self.filter_type == "largest":
-            top_groups = scores.topk(k).indices
+            top_groups_local_indices = scores.topk(k).indices
         else:
             raise ValueError(f"Invalid rollout filter type: {self.filter_type}")
 
-        return top_groups
+        return indices[top_groups_local_indices]
 
     def _groups_to_mask(self, top_groups: torch.Tensor, group_size: int = None) -> torch.Tensor:
         device = top_groups.device
@@ -197,7 +222,7 @@ class RewardRolloutFilter(RolloutFilter):
             }
         )
 
-        if rollout_filter_ratio >= 1:
+        if rollout_filter_ratio >= 1 and self.config.lower_ratio is None:
             return batch, metrics
 
         if has_episode_ids:
@@ -327,7 +352,7 @@ class EntropyRolloutFilter(RolloutFilter):
             }
         )
 
-        if rollout_filter_ratio >= 1:
+        if rollout_filter_ratio >= 1 and self.config.lower_ratio is None:
             return batch, metrics
 
         if has_episode_ids:
@@ -364,6 +389,8 @@ def build_rollout_filter(
     group_size: int,
     metric: Optional[str],
     compute_log_prob: Optional[Callable[[DataProto], DataProto]] = None,
+    lower_ratio: Optional[float] = None,
+    include_zero: bool = True,
 ) -> RolloutFilter:
     metric = (metric or "reward_variance").lower()
     metric = {
@@ -377,6 +404,8 @@ def build_rollout_filter(
         num_groups=num_groups,
         group_size=group_size,
         metric=metric,
+        lower_ratio=lower_ratio,
+        include_zero=include_zero,
     )
 
     if metric in {"reward", "reward_variance"}:

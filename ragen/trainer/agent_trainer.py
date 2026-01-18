@@ -448,6 +448,8 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             group_size=self.config.es_manager.train.group_size,
             metric=rollout_metric,
             compute_log_prob=self.actor_rollout_wg.compute_log_prob,
+            lower_ratio=getattr(rollout_cfg, "rollout_filter_lower_ratio", None),
+            include_zero=getattr(rollout_cfg, "rollout_filter_include_zero", True),
         )
 
 
