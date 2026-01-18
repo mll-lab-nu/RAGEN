@@ -42,9 +42,11 @@ def apply_omega_conf_patch() -> None:
         base: Dict[str, Any] = {}
         extras: Dict[str, Any] = {}
 
+        # Resolve interpolations before splitting to avoid losing parent context
         if isinstance(cfg, DictConfig):
-            iterator = cfg.items()
-        elif isinstance(cfg, dict):
+            cfg = OmegaConf.to_container(cfg, resolve=True)
+
+        if isinstance(cfg, dict):
             iterator = cfg.items()
         else:
             return base, extras
@@ -75,6 +77,14 @@ def apply_omega_conf_patch() -> None:
         config: DictConfig | dict | None,
         dataclass_type: Any | None = None,
     ) -> Any:
+        # Keep original behavior for non-mapping inputs (e.g., dataclass instances, lists).
+        if not isinstance(config, (DictConfig, dict)):
+            return original_fn(config, dataclass_type)
+
+        # Resolve all interpolations early to avoid losing parent context
+        if isinstance(config, DictConfig):
+            config = OmegaConf.to_container(config, resolve=True)
+
         # Delegate directly if no dataclass is involved.
         if dataclass_type is not None:
             if not is_dataclass(dataclass_type):
@@ -84,8 +94,7 @@ def apply_omega_conf_patch() -> None:
                 return original_fn(config, dataclass_type)
 
             base_dict, extras = _split_known_and_extra(config, {f.name for f in fields(dataclass_type)}, False)
-            base_cfg = OmegaConf.create(base_dict)
-            obj = original_fn(base_cfg, dataclass_type)
+            obj = original_fn(base_dict, dataclass_type)
             _attach_extras(obj, extras)
             return obj
 
@@ -101,13 +110,30 @@ def apply_omega_conf_patch() -> None:
 
         valid_fields = {f.name for f in fields(dataclass_cls)}
         base_dict, extras = _split_known_and_extra(config, valid_fields, include_target=True)
-        base_cfg = OmegaConf.create(base_dict)
-        obj = original_fn(base_cfg, dataclass_type)
+        obj = original_fn(base_dict, dataclass_type)
         _attach_extras(obj, extras)
         return obj
 
     verl_config.omega_conf_to_dataclass = patched_omega_conf_to_dataclass
     verl_config._ragen_omega_conf_patch = True
+
+    # Also patch any modules that have already imported omega_conf_to_dataclass directly
+    import sys
+    modules_to_patch = [
+        "verl.workers.fsdp_workers",
+        "verl.workers.megatron_workers",
+        "verl.workers.rollout.base",
+        "verl.workers.rollout.replica",
+        "verl.workers.rollout.sglang_rollout.async_sglang_server",
+        "verl.workers.rollout.vllm_rollout.vllm_async_server",
+        "verl.trainer.ppo.ray_trainer",
+        "verl.trainer.sft_trainer",
+    ]
+    for mod_name in modules_to_patch:
+        if mod_name in sys.modules:
+            mod = sys.modules[mod_name]
+            if hasattr(mod, "omega_conf_to_dataclass"):
+                setattr(mod, "omega_conf_to_dataclass", patched_omega_conf_to_dataclass)
 
 
 __all__ = ["apply_omega_conf_patch"]

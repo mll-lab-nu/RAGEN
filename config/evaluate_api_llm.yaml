@@ -1,6 +1,10 @@
 defaults:
   - base # this is a symbolic link to the verl/verl/trainer/config/ppo_trainer.yaml file
 
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
 model_config:
   model_name: gpt-4o # should be registered in model_info
   max_concurrency: 16
@@ -52,5 +56,4 @@ es_manager:
     env_configs:
       tags: ["CoordSokoban"]
       n_groups: [256] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
-
 
