@@ -1,5 +1,3 @@
-# from .alfworld.config import AlfredEnvConfig
-# from .alfworld.env import AlfredTXTEnv
 from .bandit.config import BanditEnvConfig
 from .bandit.env import BanditEnv
 from .countdown.config import CountdownEnvConfig
@@ -21,7 +19,6 @@ REGISTERED_ENVS = {
     'countdown': CountdownEnv,
     'sokoban': SokobanEnv,
     'frozen_lake': FrozenLakeEnv,
-    # 'alfworld': AlfredTXTEnv,
     'metamathqa': MetaMathQAEnv,
     'lean': LeanEnv,
     'sudoku': SudokuEnv,
@@ -32,11 +29,18 @@ REGISTERED_ENV_CONFIGS = {
     'countdown': CountdownEnvConfig,
     'sokoban': SokobanEnvConfig,
     'frozen_lake': FrozenLakeEnvConfig,
-    # 'alfworld': AlfredEnvConfig,
     'metamathqa': MetaMathQAEnvConfig,
     'lean': LeanEnvConfig,
     'sudoku': SudokuEnvConfig,
 }
+
+try:
+    from .alfworld.env import AlfredTXTEnv
+    from .alfworld.config import AlfredEnvConfig
+    REGISTERED_ENVS['alfworld'] = AlfredTXTEnv
+    REGISTERED_ENV_CONFIGS['alfworld'] = AlfredEnvConfig
+except ImportError:
+    pass
 
 try:
     from .webshop.env import WebShopEnv

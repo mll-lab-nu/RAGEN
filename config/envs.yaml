@@ -91,10 +91,37 @@ custom_envs:
       max_steps: 100
       render_mode: "rgb_array"
 
-  # Alfworld:
-  #   env_type: alfworld
-  #   env_instruction: "You are solving the Alfworld puzzle. "
-  #   env_config: null
+  Alfworld:
+    env_type: alfworld
+    max_actions_per_traj: 50
+    parallel_friendly: false
+    max_workers: 1
+    env_instruction: |
+      You are an expert agent in the ALFRED Embodied Environment.
+      Complete household tasks by navigating and interacting with objects.
+
+      You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <think> </think> tags.
+      Once you've finished your reasoning, you should choose an admissible action for current step and present it within <answer>...</answer> tags.
+
+    max_tokens: 512
+    env_config:
+      eval_dataset: "eval_in_distribution"
+
+  AlfworldOOD:
+    env_type: alfworld
+    max_actions_per_traj: 50
+    parallel_friendly: false
+    max_workers: 1
+    env_instruction: |
+      You are an expert agent in the ALFRED Embodied Environment.
+      Complete household tasks by navigating and interacting with objects.
+
+      You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <think> </think> tags.
+      Once you've finished your reasoning, you should choose an admissible action for current step and present it within <answer>...</answer> tags.
+
+    max_tokens: 512
+    env_config:
+      eval_dataset: "eval_out_of_distribution"
 
   Countdown:
     env_type: countdown

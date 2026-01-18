@@ -209,6 +209,7 @@ class LLMAgentProxy:
 		es_manager = self.val_es_manager if val else self.train_es_manager
 		ctx_manager = self.val_ctx_manager if val else self.train_ctx_manager
 		env_outputs = es_manager.reset()
+		ctx_manager.reset_memory_managers()
 
 		max_turn = self.config.agent_proxy.max_turn
 		multi_turn = max_turn > 1

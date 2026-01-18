@@ -20,6 +20,8 @@ from ragen.env import REGISTERED_ENV_CONFIGS
 from tensordict import TensorDict
 
 from dataclasses import asdict
+from ragen.llm_agent.memory.factory import create_memory
+from ragen.llm_agent.memory.base import BaseMemory
 register_resolvers()
 
 def get_special_tokens(tokenizer: AutoTokenizer):
@@ -100,6 +102,10 @@ class ContextManager:
                 for n_group, env_tag in zip(self.es_cfg.env_configs.n_groups, self.es_cfg.env_configs.tags)
         }
         self._init_prefix_lookup()
+        self._env_type_counts = self._compute_env_type_counts()
+
+        # Initialize memory managers per environment type
+        self._memory_managers: Dict[str, BaseMemory] = {}
 
     def _check_env_installed(self, env_type: str):
         if env_type not in REGISTERED_ENV_CONFIGS:
@@ -135,7 +141,10 @@ class ContextManager:
                 action_lookup_str += f"\nYou can make up to {env_config_new['max_actions_per_traj']} actions, separated by the action separator \" " + self.action_sep + " \"\n"
                 env_instruction += action_lookup_str
             prefixes[env_tag] = env_instruction
-            env_config_lookup[env_tag] = {'max_tokens': env_config.get("max_tokens", self.config.actor_rollout_ref.rollout.response_length)}
+            env_config_lookup[env_tag] = {
+                'max_tokens': env_config.get("max_tokens", self.config.actor_rollout_ref.rollout.response_length),
+                'env_type': env_config.env_type,
+            }
 
         tags = self.es_cfg.env_configs.tags
         n_groups = self.es_cfg.env_configs.n_groups
@@ -153,6 +162,35 @@ class ContextManager:
             
         self.prefix_lookup = prefix_lookup
         self.env_config_lookup = env_config_lookup
+
+    def _compute_env_type_counts(self) -> Dict[str, int]:
+        env_type_counts: Dict[str, int] = {}
+        for env_config in self.env_config_lookup.values():
+            env_type = env_config.get("env_type", "default")
+            env_type_counts[env_type] = env_type_counts.get(env_type, 0) + 1
+        return env_type_counts
+
+    def reset_memory_managers(self) -> None:
+        """Reset memory managers for a new batch of environments."""
+        for env_type, count in self._env_type_counts.items():
+            if env_type not in self._memory_managers:
+                self._memory_managers[env_type] = create_memory(env_type)
+            memory_manager = self._memory_managers[env_type]
+            if count > 0:
+                memory_manager.reset(count)
+
+    def _get_memory_manager(self, env_id: int) -> BaseMemory:
+        """Get or create memory manager for environment."""
+        env_config = self.env_config_lookup.get(env_id, {})
+        env_type = env_config.get("env_type", "default")
+
+        if env_type not in self._memory_managers:
+            self._memory_managers[env_type] = create_memory(env_type)
+        memory_manager = self._memory_managers[env_type]
+        env_type_count = self._env_type_counts.get(env_type, 0)
+        if getattr(memory_manager, "batch_size", 0) == 0 and env_type_count > 0:
+            memory_manager.reset(env_type_count)
+        return memory_manager
 
     def _parse_response(self, response: str) -> List:
         pattern = r'<think>(.*?)</think>\s*<answer>(.*?)</answer>' if self.config.agent_proxy.enable_think else r'<answer>(.*?)</answer>'
@@ -669,41 +707,29 @@ class ContextManager:
         turn_offset: int = 0,
         include_warning: bool = False,
     ) -> str:
-        content = ""
+        """Build user content for single-turn format using memory manager."""
+        env_id = env_output["env_id"]
 
-        if history_start < turn_idx:
-            completed_steps = turn_idx + turn_offset
-            history_length = turn_idx - history_start
-            content += (
-                f"Summary: {completed_steps} step(s) completed so far. "
-                f"Showing the last {history_length} turn(s) with state/action/reward details. "
-            )
-            content += "Recent turns:\n---\n"
-            for h_idx in range(history_start, turn_idx):
-                actual_turn = h_idx + 1 + turn_offset
-                h_turn = history[h_idx]
-                content += f"Turn {actual_turn} State:\n{h_turn.get('state', '')}\n"
-                content += f"Turn {actual_turn} Action: {h_turn.get('llm_response', '')}\n"
-                if 'reward' in h_turn:
-                    content += f"Turn {actual_turn} Reward: {h_turn['reward']}\n"
-                content += "---\n"
-
-        actual_turn = turn_idx + 1 + turn_offset
-        current_turn_prefix = "Current Turn " if history_start < turn_idx else ""
-        FORMAT_PROMPT = "<think> [Your thoughts] </think> <answer> [your answer] </answer>" if self.config.agent_proxy.enable_think else "<answer> [your answer] </answer>"
-        LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_output['env_id']]['max_tokens']} words (tokens)."
-        warning = ""
-        if include_warning and history[turn_idx].get('manager_invalid_action'):
-            warning = "No valid action provided previously. Environment state remains the same. Please try again.\n"
-
-        separator = "\n" if content else ""
-        content += f"{separator}{current_turn_prefix}(Turn {actual_turn}):\n"
-        content += (
-            f"State:\n{history[turn_idx]['state']}\n{warning}"
-            f"You have {history[turn_idx]['actions_left']} actions left. Always output: {FORMAT_PROMPT} "
-            f"with no extra text. Strictly follow this format. {LENGTH_PROMPT}\n"
+        # Get format prompts
+        FORMAT_PROMPT = (
+            "<think> [Your thoughts] </think> <answer> [your answer] </answer>"
+            if self.config.agent_proxy.enable_think
+            else "<answer> [your answer] </answer>"
         )
-        return content
+        LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_id]['max_tokens']} words (tokens)."
+
+        # Use memory manager to build content
+        memory_manager = self._get_memory_manager(env_id)
+        return memory_manager.build_user_content(
+            env_output=env_output,
+            history=history,
+            turn_idx=turn_idx,
+            history_start=history_start,
+            turn_offset=turn_offset,
+            include_warning=include_warning,
+            format_prompt=FORMAT_PROMPT,
+            length_prompt=LENGTH_PROMPT,
+        )
 
     def _build_single_turn_samples(self, env_outputs: List[Dict]) -> DataProto:
         """
