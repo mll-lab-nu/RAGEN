@@ -21,7 +21,7 @@ base_requires = [
     "ray>=2.10",
     "tensordict>=0.8.0,<0.9.0",
     "transformers",
-    "vllm==0.8.2",
+    "vllm>=0.8.2,<=0.11.0",
     "wandb",
     "gymnasium",
     "gymnasium[toy-text]",
