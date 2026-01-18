@@ -24,14 +24,14 @@ USE_WITHOUT_HISTORY="agent_proxy.context_window_mode=single_turn agent_proxy.max
 # python train.py --config-name _2_sokoban system.CUDA_VISIBLE_DEVICES="0" trainer.experiment_name=sokoban-grpo-rolloutfilter0.25-without_history $USE_GRPO_WITH_FILTER $USE_WITHOUT_HISTORY
 
 
-WANDB=offline MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name _6_webshop \
-    algorithm.adv_estimator=grpo \
+MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name webshop_full \
+    $USE_GRPO_WITH_FILTER \
     $USE_LIMITED_MULTI_TURN \
-    trainer.experiment_name=webshop3b_filter5_wndw3_grpo_aligned2_nofilter_small \
+    trainer.experiment_name=webshop3b_filter5_wndw3_grpo_full_verl \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     es_manager.train.env_groups=16 es_manager.train.group_size=8 es_manager.train.env_configs.n_groups=[16] \
     system.CUDA_VISIBLE_DEVICES=\"0\" trainer.n_gpus_per_node=1 \
-    trainer.default_local_dir=/mnt/permanent/xjin/20260117/webshop3b_filter5_wndw3_grpo_aligned2_nofilter_small \
+    trainer.default_local_dir=/mnt/permanent/xjin/20260117/webshop3b_filter5_wndw3_grpo_full_verl \
     trainer.nnodes=1 micro_batch_size_per_gpu=4 \
     ppo_mini_batch_size=64 \
     agent_proxy.max_turn=15 \

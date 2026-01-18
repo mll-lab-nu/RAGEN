@@ -31,7 +31,7 @@ MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name webshop_full \
     actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
     es_manager.train.env_groups=4 es_manager.train.group_size=8 es_manager.train.env_configs.n_groups=[4] \
     system.CUDA_VISIBLE_DEVICES=\"2,3\" trainer.n_gpus_per_node=2 \
-    trainer.default_local_dir=/mnt/permanent/xjin/20260114/webshop3b_filter5_wndw3_grpo_full \
+    trainer.default_local_dir=/mnt/permanent/xjin/20260117/webshop3b_filter5_wndw3_grpo_full \
     trainer.nnodes=1 micro_batch_size_per_gpu=1
 
 
