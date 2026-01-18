@@ -578,31 +578,48 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
             with marked_timer("step", timing_raw):
                 # generate a batch
-                with marked_timer("gen", timing_raw):
-                    batch = self.agent_proxy.rollout(batch, val=False)
+                attempts = 0
+                max_attempts = 10
+                batch = None
+                
+                while attempts < max_attempts:
+                    attempts += 1
+                    with marked_timer("gen", timing_raw):
+                        batch = DataProto()
+                        batch = self.agent_proxy.rollout(batch, val=False)
 
-                    # Filter first, then adjust batch size
-                    batch, metrics = self.rollout_filter.filter(batch)
+                        # Filter first, then adjust batch size
+                        batch, metrics = self.rollout_filter.filter(batch)
+                        
+                        if len(batch) > 0:
+                            break
+                        else:
+                            print(f"[Warning] Attempt {attempts}/{max_attempts}: all samples filtered out. Retrying rollout...")
 
-                    # Adjust batch size to be divisible by num_groups, ppo_mini_batch_size, and n_gpus
-                    num_groups = self.config.es_manager.train.env_groups
-                    ppo_mini_batch_size = self.config.actor_rollout_ref.actor.ppo_mini_batch_size
-                    n_gpus = self.config.trainer.n_gpus_per_node
-                    size_divisor = np.lcm.reduce([num_groups, ppo_mini_batch_size, n_gpus])
-                    adjust_mode = getattr(self.config.agent_proxy, "batch_adjust_mode", "copy")
-                    batch = adjust_batch(batch, size_divisor, mode=adjust_mode)
+                if len(batch) == 0:
+                    # print(f"[Error] Failed to find any valid samples after {max_attempts} attempts. Skipping this training step.")
+                    raise ValueError("Failed to find any valid samples after {} attempts".format(max_attempts))
 
-                    # Record batch and mini-batch statistics
-                    batch_size = batch.batch["input_ids"].shape[0]
-                    num_mini_batches = batch_size // ppo_mini_batch_size
-                    metrics.update({
-                        "train/batch_size": batch_size,
-                        "train/num_mini_batches": num_mini_batches,
-                    })
-                    metrics.update({"train/" + key: value for key, value in batch.meta_info["metrics"].items()})
+                # Adjust batch size to be divisible by num_groups, ppo_mini_batch_size, and n_gpus
+                num_groups = self.config.es_manager.train.env_groups
+                ppo_mini_batch_size = self.config.actor_rollout_ref.actor.ppo_mini_batch_size
+                n_gpus = self.config.trainer.n_gpus_per_node
+                size_divisor = np.lcm.reduce([num_groups, ppo_mini_batch_size, n_gpus])
+                adjust_mode = getattr(self.config.agent_proxy, "batch_adjust_mode", "copy")
+                batch = adjust_batch(batch, size_divisor, mode=adjust_mode)
 
-                    inputs, outputs, scores = _process_batch_for_logging(batch)
-                    # self._maybe_log_generations(inputs=inputs, outputs=outputs, scores=scores, _type="train")
+                # Record batch and mini-batch statistics
+                batch_size = batch.batch["input_ids"].shape[0]
+                num_mini_batches = batch_size // ppo_mini_batch_size
+                metrics.update({
+                    "train/batch_size": batch_size,
+                    "train/num_mini_batches": num_mini_batches,
+                    "train/rollout_attempts": attempts
+                })
+                metrics.update({"train/" + key: value for key, value in batch.meta_info["metrics"].items()})
+
+                inputs, outputs, scores = _process_batch_for_logging(batch)
+                # self._maybe_log_generations(inputs=inputs, outputs=outputs, scores=scores, _type="train")
 
                 if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                     # TODO: check if this is correct. Not tested yer
