@@ -52,7 +52,6 @@ actor_rollout_ref:
     gpu_memory_utilization: 0.5
     max_num_batched_tokens: 8192 # set only when enable_chunked_prefill is true
     temperature: 1
-    temperature: 1
     rollout_filter_value: 0.25
     rollout_filter_strategy: top_p # top_p, top_k, min_p
     rollout_filter_type: largest # smallest or largest
