@@ -27,11 +27,11 @@ USE_WITHOUT_HISTORY="agent_proxy.context_window_mode=single_turn agent_proxy.max
 MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name _6_webshop \
     $USE_GRPO_WITH_FILTER \
     $USE_LIMITED_MULTI_TURN \
-    trainer.experiment_name=webshop3b_filter5_wndw3_grpo_aligned_small \
+    trainer.experiment_name=webshop3b_filter5_wndw3_grpo_aligned2_small \
     actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
     es_manager.train.env_groups=16 es_manager.train.group_size=8 es_manager.train.env_configs.n_groups=[16] \
     system.CUDA_VISIBLE_DEVICES=\"0,1\" trainer.n_gpus_per_node=2 \
-    trainer.default_local_dir=/mnt/permanent/xjin/20260114/webshop3b_filter5_wndw3_grpo_aligned_small \
+    trainer.default_local_dir=/mnt/permanent/xjin/20260114/webshop3b_filter5_wndw3_grpo_aligned2_small \
     trainer.nnodes=1 micro_batch_size_per_gpu=1 \
     ppo_mini_batch_size=64 \
     agent_proxy.max_turn=15

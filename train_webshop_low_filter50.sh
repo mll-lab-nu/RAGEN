@@ -2,7 +2,9 @@ USE_LIMITED_MULTI_TURN="agent_proxy.context_window_mode=limited_multi_turn agent
 
 MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name _6_webshop \
     algorithm.adv_estimator=grpo \
-    actor_rollout_ref.rollout.rollout_filter_lower_ratio=0.5 \
+    actor_rollout_ref.rollout.rollout_filter_value=0.5 \
+    actor_rollout_ref.rollout.rollout_filter_strategy="top_p" \
+    actor_rollout_ref.rollout.rollout_filter_type="smallest" \
     actor_rollout_ref.rollout.rollout_filter_include_zero=False \
     $USE_LIMITED_MULTI_TURN \
     trainer.experiment_name=webshop3b_lowfilter50_wndw3_grpo \

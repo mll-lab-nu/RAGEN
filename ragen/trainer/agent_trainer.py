@@ -442,14 +442,14 @@ class RayAgentTrainer(VerlRayPPOTrainer):
         rollout_cfg = self.config.actor_rollout_ref.rollout
         rollout_metric = getattr(rollout_cfg, "rollout_filter_metric", "reward_variance")
         self.rollout_filter = build_rollout_filter(
-            ratio=rollout_cfg.rollout_filter_ratio,
+            value=getattr(rollout_cfg, "rollout_filter_value", getattr(rollout_cfg, "rollout_filter_ratio", 0.25)),
             filter_type=rollout_cfg.rollout_filter_type,
             num_groups=self.config.es_manager.train.env_groups,
             group_size=self.config.es_manager.train.group_size,
             metric=rollout_metric,
             compute_log_prob=self.actor_rollout_wg.compute_log_prob,
-            lower_ratio=getattr(rollout_cfg, "rollout_filter_lower_ratio", None),
             include_zero=getattr(rollout_cfg, "rollout_filter_include_zero", True),
+            strategy=getattr(rollout_cfg, "rollout_filter_strategy", "top_p"),
         )
 
 
