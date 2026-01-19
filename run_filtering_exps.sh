@@ -3,6 +3,7 @@
 # usage: bash run_filtering_exps.sh [grpo|ppo|all]
 
 ALGO="${1:-grpo}" # default to grpo
+DATE=$(date +%m%d)
 
 COMMON_FLAGS="trainer.total_training_steps=100 micro_batch_size_per_gpu=8 ppo_mini_batch_size=16 trainer.save_freq=-1 trainer.n_gpus_per_node=1 system.CUDA_VISIBLE_DEVICES=\"0\" \
     algorithm.kl_ctrl.kl_coef=0.001 actor_rollout_ref.actor.kl_loss_coef=0.001 \
@@ -47,7 +48,7 @@ run_exps_for_algo() {
 
     # 1. Baseline: No Filtering
     # top_p = 1.0, include_zero = True
-    EXP_NAME="soko_3b_${alg_name}_nofilter"
+    EXP_NAME="${DATE}_soko_3b_${alg_name}_nofilter"
     echo "Running Baseline: $EXP_NAME (No Filtering)"
     python train.py --config-name $ENV \
         trainer.experiment_name="${EXP_NAME}" \
@@ -69,7 +70,7 @@ run_exps_for_algo() {
             for inc_str in "${INC_ZEROS[@]}"; do
                 read -r inc_bool inc_suffix <<< "$inc_str"
                 
-                EXP_NAME="soko_3b_${alg_name}_${stra_suffix}_${type_suffix}_${inc_suffix}"
+                EXP_NAME="${DATE}_soko_3b_${alg_name}_${stra_suffix}_${type_suffix}_${inc_suffix}"
                 echo "Running Experiment: $EXP_NAME (Strategy: $strategy, Value: $value, Type: $ftype, IncludeZero: $inc_bool)"
                 
                 python train.py --config-name $ENV \
