@@ -5,9 +5,9 @@
 ALGO="${1:-grpo}" # default to grpo
 DATE=$(date +%m%d)
 
-COMMON_FLAGS="trainer.total_training_steps=100 micro_batch_size_per_gpu=8 ppo_mini_batch_size=16 trainer.save_freq=-1 trainer.n_gpus_per_node=1 system.CUDA_VISIBLE_DEVICES=\"0\" \
+COMMON_FLAGS="trainer.total_training_steps=100 micro_batch_size_per_gpu=4 ppo_mini_batch_size=16 trainer.save_freq=-1 trainer.n_gpus_per_node=1 system.CUDA_VISIBLE_DEVICES=\"0\" \
     algorithm.kl_ctrl.kl_coef=0.001 actor_rollout_ref.actor.kl_loss_coef=0.001 \
-    es_manager.train.env_groups=128 es_manager.train.group_size=32 es_manager.train.env_configs.n_groups=[128]"
+    es_manager.train.env_groups=8 es_manager.train.group_size=16 es_manager.train.env_configs.n_groups=[8]"
 
 ENV="_2_sokoban"
 OUTPUT_DIR="/mnt/permanent/xjin/20260119_sokoban_filters"
@@ -18,12 +18,12 @@ mkdir -p $OUTPUT_DIR
 # Format: "strategy value suffix"
 CONFIGS=(
     "top_p 0.5 topp50"
-    "top_p 0.25 topp25"
-    "min_p 0.25 minp25"
+    "top_p 0.7 topp70"
+    "top_p 0.85 topp85"
     "min_p 0.5 minp50"
-    "min_p 0.75 minp75"
-    "top_k 64 topk64"
-    "top_k 32 topk32"
+    "min_p 0.8 minp80"
+    "top_k 4 topk4"
+    "top_k 6 topk6"
 )
 
 # Format: "type suffix"
@@ -35,7 +35,6 @@ TYPES=(
 # Format: "bool suffix"
 INC_ZEROS=(
     "False noinc0"
-    "True inc0"
 )
 
 run_exps_for_algo() {
@@ -48,17 +47,24 @@ run_exps_for_algo() {
 
     # 1. Baseline: No Filtering
     # top_p = 1.0, include_zero = True
-    EXP_NAME="${DATE}_soko_3b_${alg_name}_nofilter"
-    echo "Running Baseline: $EXP_NAME (No Filtering)"
-    python train.py --config-name $ENV \
-        trainer.experiment_name="${EXP_NAME}" \
-        actor_rollout_ref.rollout.rollout_filter_strategy="top_p" \
-        actor_rollout_ref.rollout.rollout_filter_value=1.0 \
-        actor_rollout_ref.rollout.rollout_filter_type="largest" \
-        actor_rollout_ref.rollout.rollout_filter_include_zero=True \
-        $alg_flag \
-        $COMMON_FLAGS \
-        trainer.default_local_dir="${OUTPUT_DIR}/${EXP_NAME}"
+    EXP_NAME="soko_3b_${alg_name}_nofilter"
+    mkdir -p "${OUTPUT_DIR}/${EXP_NAME}"
+    if [ -f "${OUTPUT_DIR}/${EXP_NAME}/DONE" ]; then
+        echo "Skipping ${EXP_NAME} (Already Done)"
+    else
+        echo "Running Baseline: $EXP_NAME (No Filtering)"
+        timeout 1h python train.py --config-name $ENV \
+            trainer.experiment_name="${EXP_NAME}" \
+            actor_rollout_ref.rollout.rollout_filter_strategy="top_p" \
+            actor_rollout_ref.rollout.rollout_filter_value=1.0 \
+            actor_rollout_ref.rollout.rollout_filter_type="largest" \
+            actor_rollout_ref.rollout.rollout_filter_include_zero=True \
+            $alg_flag \
+            $COMMON_FLAGS \
+            trainer.default_local_dir="${OUTPUT_DIR}/${EXP_NAME}"
+        
+        touch "${OUTPUT_DIR}/${EXP_NAME}/DONE"
+    fi
 
     # 2. Grid Search
     for config_str in "${CONFIGS[@]}"; do
@@ -70,18 +76,24 @@ run_exps_for_algo() {
             for inc_str in "${INC_ZEROS[@]}"; do
                 read -r inc_bool inc_suffix <<< "$inc_str"
                 
-                EXP_NAME="${DATE}_soko_3b_${alg_name}_${stra_suffix}_${type_suffix}_${inc_suffix}"
-                echo "Running Experiment: $EXP_NAME (Strategy: $strategy, Value: $value, Type: $ftype, IncludeZero: $inc_bool)"
-                
-                python train.py --config-name $ENV \
-                    trainer.experiment_name="${EXP_NAME}" \
-                    actor_rollout_ref.rollout.rollout_filter_strategy="${strategy}" \
-                    actor_rollout_ref.rollout.rollout_filter_value=${value} \
-                    actor_rollout_ref.rollout.rollout_filter_type="${ftype}" \
-                    actor_rollout_ref.rollout.rollout_filter_include_zero=${inc_bool} \
-                    $alg_flag \
-                    $COMMON_FLAGS \
-                    trainer.default_local_dir="${OUTPUT_DIR}/${EXP_NAME}"
+                EXP_NAME="soko_3b_${alg_name}_${stra_suffix}_${type_suffix}_${inc_suffix}"
+                if [ -f "${OUTPUT_DIR}/${EXP_NAME}/DONE" ]; then
+                    echo "Skipping ${EXP_NAME} (Already Done)"
+                else
+                    echo "Running Experiment: $EXP_NAME (Strategy: $strategy, Value: $value, Type: $ftype, IncludeZero: $inc_bool)"
+                    
+                    timeout 2h python train.py --config-name $ENV \
+                        trainer.experiment_name="${EXP_NAME}" \
+                        actor_rollout_ref.rollout.rollout_filter_strategy="${strategy}" \
+                        actor_rollout_ref.rollout.rollout_filter_value=${value} \
+                        actor_rollout_ref.rollout.rollout_filter_type="${ftype}" \
+                        actor_rollout_ref.rollout.rollout_filter_include_zero=${inc_bool} \
+                        $alg_flag \
+                        $COMMON_FLAGS \
+                        trainer.default_local_dir="${OUTPUT_DIR}/${EXP_NAME}"
+                    
+                    touch "${OUTPUT_DIR}/${EXP_NAME}/DONE"
+                fi
             done
         done
     done

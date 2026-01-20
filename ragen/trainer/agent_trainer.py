@@ -591,6 +591,13 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                         # Filter first, then adjust batch size
                         batch, metrics = self.rollout_filter.filter(batch)
                         
+                        # Add kept ratio to meta_info for loss scaling
+                        if "rollout/filter_kept_ratio" in metrics:
+                            batch.meta_info["filter_kept_ratio"] = metrics["rollout/filter_kept_ratio"]
+                        else:
+                            batch.meta_info["filter_kept_ratio"] = 1.0
+
+                        
                         if len(batch) > 0:
                             break
                         else:
