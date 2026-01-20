@@ -133,14 +133,14 @@ class RewardRolloutFilter(RolloutFilter):
         rollout_filter_ratio = self.ratio
         num_groups = self.num_groups
 
-        # Check if this is without_history mode (has episode_ids)
+        # Check if this is turn-level mode (single_turn/limited_multi_turn, indicated by episode_ids)
         has_episode_ids = (
             batch.non_tensor_batch is not None
             and "episode_ids" in batch.non_tensor_batch
         )
 
         if has_episode_ids:
-            # Without_history mode: aggregate by episode first
+            # Turn-level mode: aggregate by episode first
             episode_ids = batch.non_tensor_batch["episode_ids"]
             group_ids = batch.non_tensor_batch["group_ids"]
             all_scores = batch.batch["original_rm_scores"].sum(dim=-1)
@@ -266,14 +266,14 @@ class EntropyRolloutFilter(RolloutFilter):
         token_counts = loss_mask.sum(dim=-1).clamp(min=1)
         entropy_per_traj = (entropys * loss_mask).sum(dim=-1) / token_counts
 
-        # Check if this is without_history mode (has episode_ids)
+        # Check if this is turn-level mode (single_turn/limited_multi_turn, indicated by episode_ids)
         has_episode_ids = (
             batch.non_tensor_batch is not None
             and "episode_ids" in batch.non_tensor_batch
         )
 
         if has_episode_ids:
-            # Without_history mode: aggregate by episode first
+            # Turn-level mode: aggregate by episode first
             episode_ids = batch.non_tensor_batch["episode_ids"]
 
             # Get unique episodes and their entropy (average across turns)

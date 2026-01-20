@@ -106,9 +106,9 @@ trainer:
   max_critic_ckpt_to_keep: 1
 
 agent_proxy:
-  without_history: False # if True, each turn is treated as independent sample without history
+  context_window_mode: "full" # "full" | "limited_multi_turn" | "single_turn"
+  max_context_window: -1 # k value: -1 for full history, 1 for no history (like without_history)
   batch_adjust_mode: copy # "copy" to duplicate samples, "delete" to remove samples when batch size is not divisible
-  max_context_window: -1 # set a value > 0 to enable context window for long trajectory
   max_turn: 5
   action_sep: "||"
   max_actions_per_turn: 2 # how many actions can be output at most in a single turn

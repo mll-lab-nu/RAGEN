@@ -45,6 +45,7 @@ actor_rollout_ref:
       logprobs: 20 # return top20 logprobs
 
 agent_proxy:
+  context_window_mode: "full"  # "full" | "limited_multi_turn" | "single_turn"
   max_context_window: -1
   max_turn: 5
   action_sep: "||"
