@@ -64,7 +64,7 @@ class SerpAPISearchAdapter:
                 'num': min(num, 10)
             }
             
-            response = requests.get(self.search_url, params=params)
+            response = requests.get(self.search_url, params=params, timeout=30.0)
             response.raise_for_status()
             data = response.json()
             
@@ -79,8 +79,14 @@ class SerpAPISearchAdapter:
                 search_results.append(search_result)
             
             return search_results
+        except requests.exceptions.RequestException as e:
+            print(f"SerpAPI Search error (network/HTTP): {e}")
+            return []
+        except (ValueError, KeyError) as e:
+            print(f"SerpAPI Search error (parsing): {e}")
+            return []
         except Exception as e:
-            print(f"SerpAPI Search error: {e}")
+            print(f"SerpAPI Search error (unexpected): {e}")
             return []
 
 
@@ -105,7 +111,7 @@ class SerperSearchAdapter:
                 'num': min(num, 10)
             }
             
-            response = requests.get(self.base_url, params=params, headers=self.headers)
+            response = requests.get(self.base_url, params=params, headers=self.headers, timeout=30.0)
             response.raise_for_status()
             data = response.json()
             
@@ -120,8 +126,14 @@ class SerperSearchAdapter:
                 search_results.append(search_result)
             
             return search_results
+        except requests.exceptions.RequestException as e:
+            print(f"Serper API Search error (network/HTTP): {e}")
+            return []
+        except (ValueError, KeyError) as e:
+            print(f"Serper API Search error (parsing): {e}")
+            return []
         except Exception as e:
-            print(f"Serper API Search error: {e}")
+            print(f"Serper API Search error (unexpected): {e}")
             return []
 
 

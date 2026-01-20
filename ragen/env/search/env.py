@@ -4,7 +4,7 @@ import random
 from typing import Optional, Tuple, Any, Dict, List
 from ragen.env.base import BaseLanguageBasedEnv
 from ragen.env.search.config import SearchEnvConfig
-from ragen.env.search.utils.reward_score.qa_em_format import em_check, normalize_answer
+from ragen.env.search.utils.reward_score.qa_em import em_check, normalize_answer
 from ragen.env.search.utils.reward_score.qa_rouge import compute_score_rouge
 from ragen.utils import all_seed
 import datasets
@@ -17,7 +17,7 @@ class SearchEnv(BaseLanguageBasedEnv):
     Environment: Executes search calls and appends results as <information> blocks
     """
 
-    def __init__(self, config: Optional[SearchEnvConfig] = None, sys_config=None) -> None:
+    def __init__(self, config: Optional[SearchEnvConfig] = None) -> None:
         super().__init__()
         self.config = config or SearchEnvConfig()
         self._obs: Optional[str] = None
@@ -25,6 +25,7 @@ class SearchEnv(BaseLanguageBasedEnv):
         self._history: List[str] = []
         self._question: str = ""
         self._ground_truth: Optional[Dict] = None
+        self._pending_search_results: Optional[str] = None  # Initialize to avoid AttributeError
         
         # Load data from configuration
         self.data = self._load_data()
@@ -105,31 +106,6 @@ class SearchEnv(BaseLanguageBasedEnv):
                         break
                     
                     # Format question
-                    question = example['question'].strip()
-                    if question[-1] != '?':
-                        question += '?'
-                    
-                    data.append({
-                        "question": question,
-                        "ground_truth": {
-                            "target": example['golden_answers']
-                        },
-                        "data_source": self.config.data_source
-                    })
-                return data
-                
-            elif self.config.data_source == 'strategyqa':
-                # StrategyQA has special handling in Search-R1
-                # Note: StrategyQA may need custom path handling - adjust as needed
-                dataset = datasets.load_dataset('json', data_files="/path/to/strategyqa/test_correct.jsonl")
-                # For StrategyQA, use the dataset as-is (typically test split)
-                data_split = list(dataset.values())[0]
-                
-                data = []
-                for i, example in enumerate(data_split):
-                    if i >= self.config.max_instances:
-                        break
-                    
                     question = example['question'].strip()
                     if question[-1] != '?':
                         question += '?'

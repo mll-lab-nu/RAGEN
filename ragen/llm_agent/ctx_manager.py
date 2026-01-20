@@ -105,81 +105,8 @@ class ContextManager:
 
     def _get_or_create_env_config(self, tag_or_dataset: str):
         """Get environment config from custom_envs, or create dynamically for Search datasets"""
-        # Import here to avoid circular imports
-        from ragen.llm_agent.es_manager import is_search_dataset_name, normalize_to_dataset_name
-        
-        # Check if tag exists in custom_envs
-        if tag_or_dataset in self.config.custom_envs:
-            return self.config.custom_envs[tag_or_dataset]
-        
-        # If not found, check if it's a Search dataset name
-        if is_search_dataset_name(tag_or_dataset):
-            # Use the base Search config as template
-            if 'Search' not in self.config.custom_envs:
-                raise ValueError(f"Base 'Search' config not found in custom_envs. Cannot create Search environment for dataset '{tag_or_dataset}'")
-            
-            base_search_config = self.config.custom_envs['Search']
-            # Create a new config dict with data_source overridden
-            import copy
-            from omegaconf import OmegaConf, DictConfig
-            from dataclasses import is_dataclass, asdict
-            
-            # Convert to dict, handling both DictConfig and dataclass
-            if isinstance(base_search_config, dict):
-                base_config_dict = copy.deepcopy(base_search_config)
-            elif isinstance(base_search_config, DictConfig):
-                base_config_dict = copy.deepcopy(OmegaConf.to_container(base_search_config, resolve=True))
-            elif is_dataclass(base_search_config):
-                base_config_dict = copy.deepcopy(asdict(base_search_config))
-            else:
-                # Fallback: try to convert using vars() or dict()
-                try:
-                    base_config_dict = copy.deepcopy(dict(base_search_config) if hasattr(base_search_config, '__iter__') else vars(base_search_config))
-                except (TypeError, ValueError) as e:
-                    raise TypeError(f"base_search_config must be a dict, DictConfig, or dataclass instance, got {type(base_search_config)}: {e}")
-            
-            new_config = base_config_dict
-            
-            # Normalize to dataset name (handles both 'nq' and 'NQ')
-            dataset_name = normalize_to_dataset_name(tag_or_dataset)
-            
-            # Override data_source
-            if new_config.get('env_config') is None:
-                new_config['env_config'] = {}
-            new_config['env_config']['data_source'] = dataset_name
-            
-            # Set max_steps and max_actions_per_traj based on dataset (only if not already set)
-            # This allows Hydra overrides to custom_envs.Search or custom_envs.<DatasetName> to take precedence
-            # Default values: multi-hop datasets need more steps
-            multi_hop_datasets = {'hotpotqa', '2wikimultihopqa', 'musique'}
-            if dataset_name in multi_hop_datasets:
-                default_max_actions = 6
-                default_max_steps = 6
-            else:
-                default_max_actions = 4
-                default_max_steps = 4
-            
-            # Only set defaults if not already configured (preserves values from base config or Hydra overrides)
-            if 'max_actions_per_traj' not in new_config:
-                new_config['max_actions_per_traj'] = default_max_actions
-            if new_config.get('env_config') and 'max_steps' not in new_config['env_config']:
-                new_config['env_config']['max_steps'] = default_max_steps
-            
-            # Create a simple object to hold the config
-            class DynamicEnvConfig:
-                def __init__(self, config_dict):
-                    self.env_type = config_dict.get('env_type', 'search')
-                    self.max_actions_per_traj = config_dict.get('max_actions_per_traj', 4)
-                    self.env_config = config_dict.get('env_config', {})
-                    self.env_instruction = config_dict.get('env_instruction', '')
-                    self.max_tokens = config_dict.get('max_tokens', 500)
-                    for k, v in config_dict.items():
-                        if not hasattr(self, k):
-                            setattr(self, k, v)
-            
-            return DynamicEnvConfig(new_config)
-        
-        raise ValueError(f"Environment tag or dataset name '{tag_or_dataset}' not found in custom_envs and is not a valid Search dataset name")
+        from ragen.llm_agent.env_config_utils import get_or_create_env_config
+        return get_or_create_env_config(tag_or_dataset, self.config.custom_envs)
 
     def _init_prefix_lookup(self):
         prefix_lookup = {}

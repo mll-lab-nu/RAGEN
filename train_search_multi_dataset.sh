@@ -4,17 +4,20 @@ set -euo pipefail
 
 # Configuration
 PROJ="search_multi_dataset"
-BASE_DIR="/home/js3673/RAGEN/checkpoints"
+# Use environment variables with sensible defaults
+BASE_DIR="${RAGEN_CHECKPOINTS_DIR:-${HOME}/RAGEN/checkpoints}"
 DEVICES="0,1,2,3,4,5,6,7"
 
-# Set required environment variables
-export HF_HOME=/share/nikola/js3673/cache
-export TRANSFORMERS_CACHE=/share/nikola/js3673/cache
-export HF_HUB_CACHE=/share/nikola/js3673/cache
-export HF_DATASETS_CACHE=/share/nikola/js3673/cache
+# Set required environment variables with configurable paths
+CACHE_DIR="${RAGEN_CACHE_DIR:-${HOME}/.cache/huggingface}"
+TMP_DIR="${RAGEN_TMP_DIR:-${TMPDIR:-/tmp}}"
+export HF_HOME="${HF_HOME:-${CACHE_DIR}}"
+export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${CACHE_DIR}}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-${CACHE_DIR}}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-${CACHE_DIR}}"
 export MKL_THREADING_LAYER=GNU
 export OMP_NUM_THREADS=1
-export TMPDIR=/share/nikola/js3673/tmp
+export TMPDIR="${TMP_DIR}"
 
 # Training configurations
 USE_GRPO="algorithm.adv_estimator=grpo agent_proxy.reward_normalization.method=mean_std actor_rollout_ref.actor.use_kl_loss=False"

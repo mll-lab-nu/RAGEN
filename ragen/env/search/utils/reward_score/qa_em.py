@@ -61,12 +61,20 @@ def subem_check(prediction, golden_answers):
 
 
 def extract_solution(solution_str):
-    """Extract the equation from the solution string."""
+    """Extract the answer from the solution string.
+    
+    Note: This implementation requires at least 2 <answer> tags to extract a solution.
+    This is intentional for format validation - it expects both <think> 
+    and <answer> blocks in the response. If there are 0 or 1 matches, returns None.
+    
+    For comparison, the ROUGE implementation (qa_rouge.py) accepts 1 or more tags.
+    """
     answer_pattern = r'<answer>(.*?)</answer>'
     match = re.finditer(answer_pattern, solution_str, re.DOTALL)
     matches = list(match)
     
     # If there are 0 or exactly 1 matches, return None
+    # This is intentional: EM scoring expects proper format with reasoning + answer blocks
     if len(matches) <= 1:
         return None
     
@@ -80,8 +88,8 @@ def compute_score_em(solution_str, ground_truth, method='strict', format_score=0
     Args:
         solution_str: the solution text
         ground_truth: the ground truth
-        method: the method to extract the solution, choices are 'strict' and 'flexible'
-        format_score: the score for the format
+        method: the method to extract the solution, choices are 'strict' and 'flexible' (currently unused, kept for API compatibility)
+        format_score: the score for the format (reward when answer format is correct but answer is wrong)
         score: the score for the correct answer
     """
     answer = extract_solution(solution_str=solution_str)

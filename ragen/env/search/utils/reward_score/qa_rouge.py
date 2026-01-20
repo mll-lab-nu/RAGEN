@@ -28,7 +28,11 @@ except ImportError:
 
 
 def extract_solution(solution_str: str) -> str:
-    """Extract the answer from the solution string."""
+    """Extract the answer from the solution string.
+    
+    Note: This implementation accepts 1 or more <answer> tags (unlike EM which requires 2+).
+    This is intentional for ROUGE scoring which is more lenient with format validation.
+    """
     answer_pattern = r'<answer>(.*?)</answer>'
     matches = list(re.finditer(answer_pattern, solution_str, re.DOTALL))
     
@@ -37,6 +41,7 @@ def extract_solution(solution_str: str) -> str:
         return None
     
     # If there are 1 or more matches, return the last one
+    # Note: ROUGE is more lenient than EM (which requires 2+ tags for format validation)
     return matches[-1].group(1).strip()
 
 
