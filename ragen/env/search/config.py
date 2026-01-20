@@ -1,3 +1,4 @@
+import os
 from ragen.env.base import BaseEnvConfig
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict
@@ -7,7 +8,10 @@ from typing import Optional, List, Dict
 class SearchEnvConfig(BaseEnvConfig):
     """Configuration for Search environment"""
     # Data configuration - supports Search-R1 datasets
-    dataset_path: str = field(default="/home/js3673/RAGEN/data/search/datasets/search_data.jsonl")
+    dataset_path: str = field(default_factory=lambda: os.path.join(
+        os.getenv("RAGEN_DATA_DIR", os.path.join(os.path.expanduser("~"), "RAGEN", "data")),
+        "search", "datasets", "search_data.jsonl"
+    ))
     max_instances: int = field(default=1000)
     data_source: str = field(default="nq")  # nq, triviaqa, popqa, web_questions, hotpotqa, 2wikimultihopqa, musique, bamboogle, strategyqa, eli5
     template_type: str = field(default="base")  # Search-R1 template type
