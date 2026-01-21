@@ -7,6 +7,7 @@ import atexit
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Union
+import inspect
 import PIL.Image
 import hydra
 import random
@@ -222,9 +223,13 @@ class EnvStateManager:
         # Sample without replacement for each tag
         with all_seed(seed):
             for tag, tag_envs in tag_to_envs.items():
-                # Check if this is a Search environment (has 'data' attribute)
+                # Check if this environment's reset() method accepts data_idx parameter
+                # This is more precise than checking for 'data' attribute (which countdown env also has)
                 first_env = tag_envs[0]['env']
-                if hasattr(first_env, 'data'):
+                reset_sig = inspect.signature(first_env.reset)
+                accepts_data_idx = 'data_idx' in reset_sig.parameters
+                
+                if accepts_data_idx and hasattr(first_env, 'data'):
                     try:
                         dataset_size = len(first_env.data)
                     except:
@@ -233,7 +238,7 @@ class EnvStateManager:
                     dataset_size = None
                 
                 if dataset_size is not None and dataset_size > 0:
-                    # Sample without replacement for Search environments
+                    # Sample without replacement for environments that support data_idx
                     num_envs = len(tag_envs)
                     if num_envs <= dataset_size:
                         # We have enough unique samples: sample without replacement
@@ -250,7 +255,7 @@ class EnvStateManager:
                     for env_entry, data_idx in zip(tag_envs, indices):
                         env_data_indices[env_entry['env_id']] = data_idx
                 else:
-                    # Not a Search environment or dataset size unknown: no data_idx
+                    # Environment doesn't support data_idx or dataset size unknown: no data_idx
                     for env_entry in tag_envs:
                         env_data_indices[env_entry['env_id']] = None
         
