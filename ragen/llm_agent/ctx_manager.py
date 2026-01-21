@@ -1086,6 +1086,7 @@ class ContextManager:
         all_turns_prompt_ids_list = []
         all_turns_reasoning_ids_list = []
         turn_counts_list = []
+        turn_counts_total_list = []
 
         for env_output in env_outputs:
             history = self._extract_history(env_output, prepare_for_update=True)
@@ -1102,6 +1103,8 @@ class ContextManager:
             all_turns_prompt_ids_list.append(all_prompt_ids)
             all_turns_reasoning_ids_list.append(all_reasoning_ids)
             turn_counts_list.append(len(all_prompt_ids))
+            total_turns = sum(1 for turn in history if "llm_response" in turn)
+            turn_counts_total_list.append(total_turns)
             messages = [
                 {"role": "system", "content": self._build_system_content(env_output["env_id"])},
                 {"role": "user", "content": ""}
@@ -1164,6 +1167,7 @@ class ContextManager:
             "all_turns_prompt_ids": np.array(all_turns_prompt_ids_list, dtype=object),
             "all_turns_reasoning_ids": np.array(all_turns_reasoning_ids_list, dtype=object),
             "turn_counts": np.array(turn_counts_list, dtype=int),
+            "turn_counts_total": np.array(turn_counts_total_list, dtype=int),
         }
 
         llm_inputs.meta_info = {"metrics": self._compute_metrics(env_outputs, response_length)}

@@ -462,6 +462,8 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             context_window_mode=context_window_mode,
             multi_turn_enabled=multi_turn_cfg.get("enabled", True),
             num_samples=multi_turn_cfg.get("num_samples"),
+            std_eps=collapse_cfg.get("std_eps", 1e-3),
+            ema_decay=collapse_cfg.get("ema_decay", 0.9),
         )
 
 

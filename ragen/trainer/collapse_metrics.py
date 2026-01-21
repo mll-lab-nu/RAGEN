@@ -38,7 +38,10 @@ class CollapseDetector:
         context_window_mode: str = "full",
         multi_turn_enabled: bool = True,
         num_samples: Optional[int] = None,
+        std_eps: float = 1e-3,
+        ema_decay: float = 0.9,
     ):
+        
         """
         Initialize the collapse detector.
 
@@ -49,6 +52,8 @@ class CollapseDetector:
             context_window_mode: Context window mode ("full", "single_turn", "limited_multi_turn")
             multi_turn_enabled: Whether to use multi-turn sampling for MI computation
             num_samples: Number of (x,r) pairs to sample (None = use all)
+            std_eps: Small constant for std normalization stability
+            ema_decay: EMA decay for cross-time std tracking
         """
         self.enabled = enabled
         self.compute_freq = compute_freq
@@ -56,6 +61,10 @@ class CollapseDetector:
         self.context_window_mode = context_window_mode
         self.multi_turn_enabled = multi_turn_enabled
         self.num_samples = num_samples
+        self.std_eps = std_eps
+        self.ema_decay = ema_decay
+        self._ema_marginal_std = {}
+        self._ema_marginal_std_seq = {}
 
     def compute_collapse_metrics(
         self,
@@ -77,7 +86,10 @@ class CollapseDetector:
         if not self.enabled:
             return {}
 
-        if global_step % self.compute_freq != 0:
+        # Always compute on step 1, then every compute_freq steps.
+        if global_step == 0:
+            return {}
+        if global_step != 1 and global_step % self.compute_freq != 0:
             return {}
 
         # Only compute collapse metrics when context_window_mode='full'
@@ -103,6 +115,16 @@ class CollapseDetector:
 
         metrics: Dict[str, float] = {}
 
+        # Report valid thinking rate from all turns if available.
+        total_turn_counts = batch.non_tensor_batch.get("turn_counts_total")
+        if total_turn_counts is not None and turn_counts is not None:
+            if isinstance(total_turn_counts, list):
+                total_turn_counts = np.array(total_turn_counts)
+            valid_total = int(np.sum(turn_counts))
+            total = int(np.sum(total_turn_counts))
+            if total > 0:
+                metrics["collapse/valid_thinking_rate"] = valid_total / total
+
         def _safe_compute(label: str, prompt_ids_list: List, reasoning_ids_list: List, sample_group_ids: np.ndarray) -> None:
             if len(prompt_ids_list) == 0:
                 return
@@ -113,6 +135,7 @@ class CollapseDetector:
                     prompt_ids_list,
                     reasoning_ids_list,
                     sample_group_ids,
+                    ema_key=label,
                 )
                 metrics.update(self._prefix_metrics(sample_metrics, label))
             except Exception as e:
@@ -184,6 +207,7 @@ class CollapseDetector:
         prompt_ids_list: List,
         reasoning_ids_list: List,
         group_ids: np.ndarray,
+        ema_key: Optional[str] = None,
     ) -> Dict[str, float]:
         # Build mapping from group_id to column index
         unique_groups = np.unique(group_ids)
@@ -228,10 +252,38 @@ class CollapseDetector:
         metrics: Dict[str, float] = {}
         metrics.update(self._compute_mi_estimate(matched, marginal, N_prompts))
         metrics["collapse/mi_seq_estimate"] = (matched_sum - marginal_sum).mean().item()
-        metrics.update(self._compute_retrieval_accuracy(cross_log_probs, col_ids, N_prompts))
+        col_signatures = []
+        for gid in unique_groups:
+            prompt_ids = prompts[int(gid)].detach().cpu().tolist()
+            col_signatures.append(tuple(prompt_ids))
+        metrics.update(
+            self._compute_retrieval_accuracy(
+                cross_log_probs, col_ids, N_prompts, col_signatures
+            )
+        )
         metrics.update(
             self._compute_reasoning_entropy(matched, marginal, matched_sum, marginal_sum)
         )
+
+        marginal_std = marginal.std(unbiased=False)
+        marginal_sum_std = marginal_sum.std(unbiased=False)
+        metrics["collapse/marginal_std"] = marginal_std.item()
+        metrics["collapse/marginal_std_seq"] = marginal_sum_std.item()
+
+        denom = marginal_std + self.std_eps
+        denom_seq = marginal_sum_std + self.std_eps
+        metrics["collapse/mi_zscore"] = ((matched - marginal) / denom).mean().item()
+        metrics["collapse/mi_zscore_seq"] = ((matched_sum - marginal_sum) / denom_seq).mean().item()
+
+        key = ema_key or "default"
+        ema_std = self._update_ema_std(key, marginal_std.item())
+        ema_std_seq = self._update_ema_std(key, marginal_sum_std.item(), use_seq=True)
+        metrics["collapse/marginal_std_ema"] = ema_std
+        metrics["collapse/marginal_std_ema_seq"] = ema_std_seq
+        metrics["collapse/mi_zscore_ema"] = ((matched - marginal) / (ema_std + self.std_eps)).mean().item()
+        metrics["collapse/mi_zscore_ema_seq"] = (
+            (matched_sum - marginal_sum) / (ema_std_seq + self.std_eps)
+        ).mean().item()
         return metrics
 
     def _prefix_metrics(self, metrics: Dict[str, float], prefix: str) -> Dict[str, float]:
@@ -243,6 +295,14 @@ class CollapseDetector:
             else:
                 prefixed[f"{prefix}/{key}"] = value
         return prefixed
+
+    def _update_ema_std(self, key: str, current: float, use_seq: bool = False) -> float:
+        store = self._ema_marginal_std_seq if use_seq else self._ema_marginal_std
+        if key not in store:
+            store[key] = current
+        else:
+            store[key] = self.ema_decay * store[key] + (1 - self.ema_decay) * current
+        return store[key]
 
     def _apply_mask(self, batch: DataProto, mask: np.ndarray) -> DataProto:
         """Apply a boolean mask to filter the batch."""
@@ -500,35 +560,83 @@ class CollapseDetector:
         cross_log_probs: torch.Tensor,
         col_ids: torch.Tensor,
         N_prompts: int,
+        col_signatures: Optional[List[Tuple[int, ...]]] = None,
     ) -> Dict[str, float]:
         """
         Compute retrieval accuracy.
 
-        Acc = fraction where argmax_j ℓ_j(r) == true prompt column
+        Acc = fraction where argmax_j ℓ_j(r) matches the true prompt.
+        If col_signatures are provided, columns with identical prompts are treated as correct.
 
         Args:
             cross_log_probs: (NK, N) tensor
             col_ids: Column indices for each sample's true prompt
             N_prompts: Number of unique prompts
+            col_signatures: Optional list of prompt signatures for column equivalence
 
         Returns:
             Dictionary of retrieval metrics
         """
         # Predict: which column (prompt) gives highest log prob
         predicted_cols = torch.argmax(cross_log_probs, dim=1)
+        k_max = min(8, N_prompts)
+        topk_cols = torch.topk(cross_log_probs, k_max, dim=1).indices if k_max > 0 else None
 
-        # Compare with true column indices
-        correct = (predicted_cols == col_ids).float()
-        accuracy = correct.mean().item()
+        metrics: Dict[str, float] = {}
 
-        # Chance level depends on number of prompts
-        chance_level = 1.0 / N_prompts
+        if col_signatures is None:
+            # Compare with true column indices
+            correct = (predicted_cols == col_ids).float()
+            accuracy = correct.mean().item()
+            chance_level = 1.0 / N_prompts
 
-        return {
-            "collapse/retrieval_accuracy": accuracy,
-            "collapse/retrieval_chance_level": chance_level,
-            "collapse/retrieval_above_chance": accuracy - chance_level,
-        }
+            if topk_cols is not None:
+                for k in (2, 4, 8):
+                    k_eff = min(k, k_max)
+                    correct_k = (topk_cols[:, :k_eff] == col_ids.unsqueeze(1)).any(dim=1)
+                    metrics[f"collapse/retrieval_accuracy@{k}"] = correct_k.float().mean().item()
+                    chance_k = k_eff / N_prompts
+                    metrics[f"collapse/retrieval_chance_level@{k}"] = chance_k
+                    metrics[f"collapse/retrieval_above_chance@{k}"] = (
+                        metrics[f"collapse/retrieval_accuracy@{k}"] - chance_k
+                    )
+        else:
+            sig_to_id: Dict[Tuple[int, ...], int] = {}
+            col_sig_ids = np.empty(N_prompts, dtype=int)
+            for idx, sig in enumerate(col_signatures):
+                sig_id = sig_to_id.setdefault(sig, len(sig_to_id))
+                col_sig_ids[idx] = sig_id
+
+            col_sig_ids_t = torch.tensor(col_sig_ids, device=cross_log_probs.device)
+            true_sig_ids = col_sig_ids_t[col_ids]
+            predicted_sig_ids = col_sig_ids_t[predicted_cols]
+            accuracy = (predicted_sig_ids == true_sig_ids).float().mean().item()
+
+            counts = np.bincount(col_sig_ids)
+            true_sig_ids_np = col_sig_ids[col_ids.detach().cpu().numpy()]
+            chance_level = float((counts[true_sig_ids_np] / N_prompts).mean())
+
+            if topk_cols is not None:
+                topk_sig_ids = col_sig_ids_t[topk_cols]
+                for k in (2, 4, 8):
+                    k_eff = min(k, k_max)
+                    correct_k = (topk_sig_ids[:, :k_eff] == true_sig_ids.unsqueeze(1)).any(dim=1)
+                    metrics[f"collapse/retrieval_accuracy@{k}"] = correct_k.float().mean().item()
+                    chance_k = min(1.0, chance_level * k_eff)
+                    metrics[f"collapse/retrieval_chance_level@{k}"] = chance_k
+                    metrics[f"collapse/retrieval_above_chance@{k}"] = (
+                        metrics[f"collapse/retrieval_accuracy@{k}"] - chance_k
+                    )
+
+        metrics.update(
+            {
+                "collapse/retrieval_accuracy": accuracy,
+                "collapse/retrieval_chance_level": chance_level,
+                "collapse/retrieval_above_chance": accuracy - chance_level,
+            }
+        )
+
+        return metrics
     
     def _compute_reasoning_entropy(
         self,
@@ -570,8 +678,24 @@ class CollapseDetector:
             first_turn_prompt_ids = list(first_turn_prompt_ids)
         if isinstance(first_turn_reasoning_ids, np.ndarray):
             first_turn_reasoning_ids = list(first_turn_reasoning_ids)
+        if isinstance(group_ids, list):
+            group_ids = np.array(group_ids)
 
-        total_pairs = len(first_turn_prompt_ids)
+        valid_indices = []
+        for idx, tokens in enumerate(first_turn_reasoning_ids):
+            if torch.is_tensor(tokens):
+                token_count = int(tokens.numel())
+            else:
+                if isinstance(tokens, np.ndarray) and tokens.dtype == object:
+                    tokens = tokens.tolist()
+                token_count = len(tokens)
+            if token_count > 0:
+                valid_indices.append(idx)
+
+        if not valid_indices:
+            return [], [], np.array([], dtype=int)
+
+        total_pairs = len(valid_indices)
         if total_pairs == 0:
             return [], [], np.array([], dtype=int)
 
@@ -580,9 +704,10 @@ class CollapseDetector:
         else:
             indices = np.arange(total_pairs)
 
-        sampled_prompt_ids = [first_turn_prompt_ids[i] for i in indices]
-        sampled_reasoning_ids = [first_turn_reasoning_ids[i] for i in indices]
-        sampled_group_ids = group_ids[indices]
+        selected = [valid_indices[i] for i in indices]
+        sampled_prompt_ids = [first_turn_prompt_ids[i] for i in selected]
+        sampled_reasoning_ids = [first_turn_reasoning_ids[i] for i in selected]
+        sampled_group_ids = group_ids[selected]
         return sampled_prompt_ids, sampled_reasoning_ids, sampled_group_ids
 
     def _sample_turn_uniform(
