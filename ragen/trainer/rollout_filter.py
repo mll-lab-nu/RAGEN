@@ -74,35 +74,66 @@ class RolloutFilter:
         if self.strategy == "top_p":
             if self.value >= 1.0:
                 return indices
-            k = max(int(self.config.value * indices.numel()), 1)
+
+            # Nucleus Sampling (Cumulative Probability)
+            # 1. Determine logits for softmax
+            if self.filter_type == "largest":
+                logits = scores
+            elif self.filter_type == "smallest":
+                logits = -scores
+            else:
+                raise ValueError(f"Invalid rollout filter type: {self.filter_type}")
+
+            # 2. Compute probabilities
+            probs = torch.softmax(logits, dim=0)
+
+            # 3. Sort probabilities in descending order
+            sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+
+            # 4. Compute cumulative sum
+            cumulative_probs = torch.cumsum(sorted_probs, dim=0)
+
+            # 5. Cutoff at P (self.value)
+            # Select elements where cumulative probability is <= P, plus the first one that exceeds it
+            # To do this, we find the first index where cumulative_probs > P
+            cutoff_index = torch.searchsorted(cumulative_probs, self.value).item()
+            
+            # Ensure we select at least one
+            k = cutoff_index + 1
+            k = min(k, indices.numel())
+            
+            # Select the top k indices from the sorted order
+            top_groups_local_indices = sorted_indices[:k]
+            return indices[top_groups_local_indices]
+
         elif self.strategy == "top_k":
             k = int(self.config.value)
             k = min(k, indices.numel())
-            k = max(k, 1) # Ensure at least 1? Or 0? Assuming 1 for safety.
+            k = max(k, 1) # Ensure at least 1
+            
+            if self.filter_type == "smallest":
+                top_groups_local_indices = (-scores).topk(k).indices
+            elif self.filter_type == "largest":
+                top_groups_local_indices = scores.topk(k).indices
+            else:
+                raise ValueError(f"Invalid rollout filter type: {self.filter_type}")
+            
+            return indices[top_groups_local_indices]
+
         elif self.strategy == "min_p":
             # min-p: take all groups > max_score * value
             max_score = scores.max()
             threshold = max_score * self.config.value
-            if self.filter_type == "smallest":
-                 # Use negated threshold logic if users interpret min-p for smallest as < min * value?
-                 # But sticking to user request: "greater than max_metric * ratio"
-                 # Warning: This strategy seems designed for 'largest' type metrics.
-                 pass
+            
+            # Note: This logic assumes 'largest' semantics generally for min_p thresholding
+            # If strictly following 'smallest', we might want < min_score / value? 
+            # But keeping previous behavior: selection based on score magnitude relative to max.
             
             mask = scores > threshold
             return indices[mask]
+            
         else:
              raise ValueError(f"Unknown strategy: {self.strategy}")
-             
-        # Selection for k-based strategies (top_p, top_k)
-        if self.filter_type == "smallest":
-            top_groups_local_indices = (-scores).topk(k).indices
-        elif self.filter_type == "largest":
-            top_groups_local_indices = scores.topk(k).indices
-        else:
-            raise ValueError(f"Invalid rollout filter type: {self.filter_type}")
-
-        return indices[top_groups_local_indices]
 
     def _groups_to_mask(self, top_groups: torch.Tensor, group_size: int = None) -> torch.Tensor:
         device = top_groups.device

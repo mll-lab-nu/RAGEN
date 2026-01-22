@@ -1,0 +1,63 @@
+defaults:
+  - base
+
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+algorithm:
+  adv_estimator: gae
+  gamma: 1.0
+  lam: 1.0
+
+model_path: Qwen/Qwen2.5-1.5B-Instruct
+micro_batch_size_per_gpu: 4
+ppo_mini_batch_size: 32
+
+actor_rollout_ref:
+  actor:
+    use_kl_loss: True
+    kl_loss_coef: 0.01
+    kl_loss_type: low_var_kl
+    optim:
+      lr: 1e-6
+  rollout:
+    response_length: 512
+    max_model_len: 2560
+    temperature: 1.0
+    val_kwargs:
+      temperature: 0.4
+      do_sample: True
+
+critic:
+  optim:
+    lr: 1e-5
+
+agent_proxy:
+  context_window_mode: "single_turn"
+  max_context_window: 3
+  max_turn: 50
+  max_actions_per_turn: 1
+  enable_think: True
+
+# PPO needs more samples: train=16 groups x 8 samples = 128 total
+es_manager:
+  train:
+    env_groups: 16
+    group_size: 8
+    env_configs:
+      tags: ["Alfworld"]
+      n_groups: [16]
+  val:
+    env_groups: 128
+    group_size: 1
+    env_configs:
+      tags: ["Alfworld"]
+      n_groups: [128]
+
+trainer:
+  project_name: ragen_latest
+  experiment_name: alfworld_ppo_qwen2.5_1.5b
+  total_training_steps: 150
+  test_freq: 10
+  n_gpus_per_node: 1

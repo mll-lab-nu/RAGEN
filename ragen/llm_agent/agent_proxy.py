@@ -195,6 +195,7 @@ class LLMAgentProxy:
         es_manager = self.val_es_manager if val else self.train_es_manager
         ctx_manager = self.val_ctx_manager if val else self.train_ctx_manager
         env_outputs = es_manager.reset()
+        ctx_manager.reset_memory_managers()
 
         max_turn = self.config.agent_proxy.max_turn
         multi_turn = max_turn > 1
@@ -256,7 +257,12 @@ class LLMAgentProxy:
             last_inputs.meta_info["mode"] = "multiturn-end"
             self.generate_sequences(last_inputs)
         rollout_states = es_manager.get_rollout_states()
-        rollouts = ctx_manager.formulate_rollouts(rollout_states)
+        include_collapse_data = True
+        if dataproto.meta_info is not None:
+            include_collapse_data = dataproto.meta_info.get("compute_collapse", True)
+        rollouts = ctx_manager.formulate_rollouts(
+            rollout_states, include_collapse_data=include_collapse_data
+        )
 
         # calculate instance-level entropy
         if "entropys" in rollouts.non_tensor_batch:

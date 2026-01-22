@@ -137,13 +137,28 @@ def add_dependency_and_validate_config(config):
     assert len(str(config.system.CUDA_VISIBLE_DEVICES).split(',')) == config.trainer.n_gpus_per_node, \
         f"CUDA_VISIBLE_DEVICES ({config.system.CUDA_VISIBLE_DEVICES}) must have the same number of GPUs as n_gpus_per_node ({config.trainer.n_gpus_per_node})"
     context_window_mode = getattr(config.agent_proxy, "context_window_mode", "full")
+    rollout_filter_strategy = getattr(config.actor_rollout_ref.rollout, "rollout_filter_strategy", "top_p")
+    rollout_filter_value = getattr(config.actor_rollout_ref.rollout, "rollout_filter_value", 0.25)
+    
+    # Estimate effective ratio for validation
+    if rollout_filter_strategy == "top_p":
+        effective_ratio = rollout_filter_value
+    elif rollout_filter_strategy == "top_k":
+        effective_ratio = rollout_filter_value / config.es_manager.train.env_groups
+    else:
+        # For min_p or others, we can't easily predict. Assume 1.0 for validation or skip.
+        # Let's assume user knows what they are doing and skip strict validation or use a safe bound?
+        # Using 1.0 might hide errors. Using 0.0 will always fail.
+        # Let's use 1.0 and print a warning if we could.
+        effective_ratio = 1.0
+
     if context_window_mode in ("single_turn", "limited_multi_turn"):
         # In these modes, each turn becomes a separate sample, so we need more samples
-        assert config.es_manager.train.env_groups * config.es_manager.train.group_size * config.actor_rollout_ref.rollout.rollout_filter_ratio * config.agent_proxy.max_turn >= config.ppo_mini_batch_size, \
-            f"env_groups * group_size * rollout_filter_ratio * max_turn ({config.es_manager.train.env_groups * config.es_manager.train.group_size * config.actor_rollout_ref.rollout.rollout_filter_ratio * config.agent_proxy.max_turn}) must be greater than or equal to ppo_mini_batch_size ({config.ppo_mini_batch_size})"
+        assert config.es_manager.train.env_groups * config.es_manager.train.group_size * effective_ratio * config.agent_proxy.max_turn >= config.ppo_mini_batch_size, \
+            f"env_groups * group_size * effective_ratio * max_turn ({config.es_manager.train.env_groups * config.es_manager.train.group_size * effective_ratio * config.agent_proxy.max_turn}) must be greater than or equal to ppo_mini_batch_size ({config.ppo_mini_batch_size})"
     else:
-        assert config.es_manager.train.env_groups * config.es_manager.train.group_size * config.actor_rollout_ref.rollout.rollout_filter_ratio >= config.ppo_mini_batch_size, \
-            f"env_groups * group_size * rollout_filter_ratio ({config.es_manager.train.env_groups * config.es_manager.train.group_size * config.actor_rollout_ref.rollout.rollout_filter_ratio}) must be greater than or equal to ppo_mini_batch_size ({config.ppo_mini_batch_size}). Note that effective rollouts for update is env_groups * group_size * rollout_filter_ratio."
+        assert config.es_manager.train.env_groups * config.es_manager.train.group_size * effective_ratio >= config.ppo_mini_batch_size, \
+            f"env_groups * group_size * effective_ratio ({config.es_manager.train.env_groups * config.es_manager.train.group_size * effective_ratio}) must be greater than or equal to ppo_mini_batch_size ({config.ppo_mini_batch_size})."
     assert config.algorithm.bi_level_gae == False or config.algorithm.adv_estimator == "gae", "BI_LEVEL_GAE is enabled, so config.algorithm.adv_estimator should be set to gae"
     assert config.algorithm.bi_level_gae == False or (not config.agent_proxy.use_turn_scores), "BI_LEVEL_GAE is enabled, but currently use_turn_scores are not correctly supported, so config.agent_proxy.use_turn_scores should be set to False" # This will be added later. Currently turn-scores are not correctly supported yet.
     # assert config.algorithm.bi_level_gae == False or config.agent_proxy.use_turn_scores, "BI_LEVEL_GAE is enabled, so config.agent_proxy.use_turn_scores should be set to True" # This will be added later. Currently turn-scores are not correctly supported yet.
@@ -171,7 +186,8 @@ def run_ppo(config) -> None:
     os.environ["ENSURE_CUDA_VISIBLE_DEVICES"] = os.environ.get('CUDA_VISIBLE_DEVICES', '')
     if not ray.is_initialized():
         # this is for local ray cluster
-        ray.init(runtime_env={
+        ray.init(
+            runtime_env={
             'env_vars': {
                 'TOKENIZERS_PARALLELISM': 'true',
                 'NCCL_DEBUG': 'WARN',

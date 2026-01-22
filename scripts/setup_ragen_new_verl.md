@@ -46,4 +46,8 @@ bash scripts/setup_webshop.sh
 
 # Install Lean environment dependencies
 pip install -e ".[lean]"
+
+# Setup Alfworld environment + data
+pip install alfworld
+alfworld-download --extra
 ```

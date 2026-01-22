@@ -22,3 +22,6 @@ python train.py --config-name _2_sokoban system.CUDA_VISIBLE_DEVICES="0" trainer
 # WITHOUT HISTORY
 python train.py --config-name _2_sokoban system.CUDA_VISIBLE_DEVICES="0" trainer.experiment_name=sokoban-ppo-rolloutfilter0.25-without_history $USE_PPO_WITH_FILTER $USE_WITHOUT_HISTORY
 python train.py --config-name _2_sokoban system.CUDA_VISIBLE_DEVICES="0" trainer.experiment_name=sokoban-grpo-rolloutfilter0.25-without_history $USE_GRPO_WITH_FILTER $USE_WITHOUT_HISTORY
+
+# ALFWORLD
+python train.py --config-name _9_alfworld system.CUDA_VISIBLE_DEVICES="0" trainer.experiment_name=alfworld-ppo-single-turn

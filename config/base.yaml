@@ -37,6 +37,7 @@ actor_rollout_ref:
     clip_ratio_low: 0.2
     clip_ratio_high: 0.28
     grpo_advantage_length_weight: ${grpo_advantage_length_weight}
+    filter_loss_scaling: "none" # "none", "linear", "sqrt"
     optim:
       betas: [0.9, 0.999]
       lr: 1e-6
@@ -52,7 +53,6 @@ actor_rollout_ref:
     response_length: 400 # single-turn response length
     gpu_memory_utilization: 0.5
     max_num_batched_tokens: 8192 # set only when enable_chunked_prefill is true
-    temperature: 1
     temperature: 1
     rollout_filter_value: 0.25
     rollout_filter_strategy: top_p # top_p, top_k, min_p
@@ -122,6 +122,14 @@ agent_proxy:
     grouping: "state" # state / batch / inductive
     method: "identity" # asym_clip / identity / mean_std
 
+# Collapse detection for diagnosing template collapse vs entropy collapse
+collapse_detection:
+  compute_freq: 5  # Compute every N steps
+  micro_batch_size: 128  # Micro batch size for cross-scoring
+  first_turn_enabled: true  # Compute first-turn metrics
+  multi_turn_enabled: true  # Enable multi-turn sampling for MI computation
+  num_samples: 64  # N or all
+
 es_manager:
   format_penalty: -0.1
   train:
@@ -132,11 +140,12 @@ es_manager:
       tags: ["CoordSokoban"]
       n_groups: [8] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
   val:
-    env_groups: 32
-    group_size: 16 # should be set to 1 because when val temperature is set to 0 and group size > 1, there will be repetitive prompts which leads to same trajectory.
+    env_groups: 512
+    group_size: 1 # should be set to 1 because when val temperature is set to 0 and group size > 1, there will be repetitive prompts which leads to same trajectory.
+
     env_configs:
       tags: ["CoordSokoban"]
-      n_groups: [32] # TODO: If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
+      n_groups: [512] # TODO: If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
 
 ctx_manager:
   generation: # go to vllm

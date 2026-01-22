@@ -52,6 +52,7 @@ from verl.utils.torch_functional import masked_mean
 from ragen.llm_agent.agent_proxy import LLMAgentProxy
 from ragen.utils import GenerationsLogger
 from ragen.trainer.rollout_filter import build_rollout_filter
+from ragen.trainer.collapse_metrics import CollapseDetector
 
 from tensordict import TensorDict
 
@@ -452,6 +453,35 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             strategy=getattr(rollout_cfg, "rollout_filter_strategy", "top_p"),
         )
 
+        # create collapse detector
+        collapse_cfg = self.config.get("collapse_detection", {})
+        context_window_mode = getattr(self.config.agent_proxy, "context_window_mode", "full")
+        # num_samples: int for specific count, "all" for using all samples
+        num_samples_cfg = collapse_cfg.get("num_samples", "all")
+        if num_samples_cfg is None:
+            raise ValueError("collapse_detection.num_samples must be an int or 'all'")
+        if isinstance(num_samples_cfg, str):
+            if num_samples_cfg.lower() != "all":
+                raise ValueError("collapse_detection.num_samples must be an int or 'all'")
+            num_samples = None
+        else:
+            try:
+                num_samples = int(num_samples_cfg)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("collapse_detection.num_samples must be an int or 'all'") from exc
+            if num_samples <= 0:
+                raise ValueError("collapse_detection.num_samples must be a positive int or 'all'")
+        self.collapse_detector = CollapseDetector(
+            compute_freq=collapse_cfg.get("compute_freq", 10),
+            micro_batch_size=collapse_cfg.get("micro_batch_size", 16),
+            context_window_mode=context_window_mode,
+            multi_turn_enabled=collapse_cfg.get("multi_turn_enabled", False),
+            first_turn_enabled=collapse_cfg.get("first_turn_enabled", False),
+            num_samples=num_samples,
+            std_eps=collapse_cfg.get("std_eps", 1e-3),
+            ema_decay=collapse_cfg.get("ema_decay", 0.9),
+        )
+
 
     def _save_checkpoint(self):
         """ 
@@ -569,6 +599,9 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
         import time
         self.start_time = time.time()
+        self.train_time_total = 0.0
+        self.eval_time_total = 0.0
+        self.collapse_time_total = 0.0
         for step in range(self.total_training_steps):
             # metrics = {}
             timing_raw = {}
@@ -586,10 +619,35 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                     attempts += 1
                     with marked_timer("gen", timing_raw):
                         batch = DataProto()
+                        batch.meta_info = batch.meta_info or {}
+                        batch.meta_info["compute_collapse"] = self.collapse_detector.should_compute(
+                            self.global_steps
+                        )
                         batch = self.agent_proxy.rollout(batch, val=False)
 
+                    metrics = {}
+
+                    # Compute collapse detection metrics before filtering (for fair comparison)
+                    with marked_timer("collapse_metrics", timing_raw, color="cyan"):
+                        collapse_metrics = self.collapse_detector.compute_collapse_metrics(
+                            batch=batch,
+                            actor_compute_log_prob_fn=self.actor_rollout_wg.compute_log_prob,
+                            global_step=self.global_steps,
+                        )
+                        metrics.update(collapse_metrics)
+
+                    with marked_timer("filter", timing_raw):
                         # Filter first, then adjust batch size
-                        batch, metrics = self.rollout_filter.filter(batch)
+                        batch, filter_metrics = self.rollout_filter.filter(batch)
+                        metrics.update(filter_metrics)
+                        
+                        # Add kept ratio to meta_info for loss scaling
+                        if "rollout/filter_kept_ratio" in metrics:
+                            batch.meta_info["filter_kept_ratio"] = metrics["rollout/filter_kept_ratio"]
+                        else:
+                            batch.meta_info["filter_kept_ratio"] = 1.0
+
+
                         
                         if len(batch) > 0:
                             break
@@ -745,6 +803,15 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                         bi_level_gae=self.config.algorithm.bi_level_gae,
                     )
 
+                    # Apply filter loss scaling by scaling advantages
+                    # This avoids modifying the actor implementation in the submodule
+                    filter_loss_scaling = getattr(self.config.actor_rollout_ref.actor, "filter_loss_scaling", "none")
+                    filter_kept_ratio = batch.meta_info.get("filter_kept_ratio", 1.0)
+                    if filter_loss_scaling == "linear":
+                        batch.batch["advantages"] *= filter_kept_ratio
+                    elif filter_loss_scaling == "sqrt":
+                        batch.batch["advantages"] *= (filter_kept_ratio ** 0.5)
+
                 ##### A very different setting, just here for testing: Can I normalize the advantages to have a mean of 0?
                 if self.config.algorithm.adv_estimator == AdvantageEstimator.GRPO and self.config.grpo_advantage_length_weight:
                     response_mask = batch.batch["response_mask"]
@@ -797,6 +864,17 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                     with marked_timer("save_checkpoint", timing_raw):
                         self._save_checkpoint()
 
+            eval_time = timing_raw.get("testing", 0.0)
+            save_time = timing_raw.get("save_checkpoint", 0.0)
+            collapse_time = timing_raw.get("collapse_metrics", 0.0)
+            step_time = timing_raw.get("step", 0.0)
+            train_time = step_time - eval_time - save_time - collapse_time
+            if train_time < 0:
+                train_time = 0.0
+            self.train_time_total += train_time
+            self.eval_time_total += eval_time
+            self.collapse_time_total += collapse_time
+
             # collect metrics
             metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
             metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
@@ -804,6 +882,13 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             n_gpus = self.resource_pool_manager.get_n_gpus()
             metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
 
+            metrics.update({
+                "timing_s/train_step": train_time,
+                "timing_s/eval_step": eval_time,
+                "timing_s/train_total": self.train_time_total,
+                "timing_s/eval_total": self.eval_time_total,
+                "timing_s/collapse_total": self.collapse_time_total,
+            })
             # add another timing metric: total time
             metrics.update({"timing_s/total": time.time() - self.start_time})
             # TODO: make a canonical logger that supports various backend

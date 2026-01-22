@@ -36,6 +36,20 @@ INC_ZEROS=(
 
 mkdir -p $OUTPUT_DIR
 
+# Baseline: No Filtering
+# top_p = 1.0, include_zero = True
+EXP_NAME="soko_3b_ppo_nofilter"
+echo "Running Experiment: $EXP_NAME (No Filtering)"
+python train.py --config-name $ENV \
+    trainer.experiment_name="${EXP_NAME}" \
+    actor_rollout_ref.rollout.rollout_filter_strategy="top_p" \
+    actor_rollout_ref.rollout.rollout_filter_value=1.0 \
+    actor_rollout_ref.rollout.rollout_filter_type="largest" \
+    actor_rollout_ref.rollout.rollout_filter_include_zero=True \
+    $ALGO_FLAGS \
+    $COMMON_FLAGS \
+    trainer.default_local_dir="${OUTPUT_DIR}/${EXP_NAME}"
+
 for config_str in "${CONFIGS[@]}"; do
     read -r strategy value stra_suffix <<< "$config_str"
     
