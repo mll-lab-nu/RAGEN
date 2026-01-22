@@ -8,6 +8,8 @@ import logging
 
 import torch
 import numpy as np
+from typing import List, Dict, Any, Optional, Union
+from dataclasses import dataclass, asdict, is_dataclass
 from typing import List, Dict, Any, Optional, Union, Tuple
 from dataclasses import dataclass
 import re
@@ -18,8 +20,6 @@ import hydra
 from ragen.utils import register_resolvers
 from ragen.env import REGISTERED_ENV_CONFIGS
 from tensordict import TensorDict
-
-from dataclasses import asdict
 register_resolvers()
 
 def get_special_tokens(tokenizer: AutoTokenizer):
@@ -105,19 +105,50 @@ class ContextManager:
         if env_type not in REGISTERED_ENV_CONFIGS:
             raise ValueError(f"Environment {env_type} is not installed. Please install it using the scripts/setup_{env_type}.sh script.")
 
+    def _get_or_create_env_config(self, tag_or_dataset: str):
+        """Get environment config from custom_envs, or create dynamically for Search datasets"""
+        from ragen.llm_agent.env_config_utils import get_or_create_env_config
+        return get_or_create_env_config(tag_or_dataset, self.config.custom_envs)
+
     def _init_prefix_lookup(self):
         prefix_lookup = {}
         prefixes = {}
         env_config_lookup = {}
-        env_config = {}
-        for env_tag, env_config in self.config.custom_envs.items():
-            if env_tag not in self.es_cfg.env_configs.tags:
-                continue
-
+        # Process all tags/dataset names from es_cfg
+        for env_tag in self.es_cfg.env_configs.tags:
+            env_config = self._get_or_create_env_config(env_tag)
+            
             self._check_env_installed(env_config.env_type)
             env_config_new = asdict(REGISTERED_ENV_CONFIGS[env_config.env_type]())
-            for k,v in env_config.items():
-                env_config_new[k] = v
+            
+            # Convert env_config to dict if it's a DictConfig or dataclass instance
+            from omegaconf import DictConfig, OmegaConf
+            if isinstance(env_config, DictConfig):
+                env_config_dict = OmegaConf.to_container(env_config, resolve=True)
+            elif is_dataclass(env_config):
+                env_config_dict = asdict(env_config)
+            elif hasattr(env_config, '__dict__'):
+                # Handle DynamicEnvConfig and other objects with __dict__
+                env_config_dict = vars(env_config)
+            else:
+                # Fallback: empty dict
+                env_config_dict = {}
+            
+            for k, v in env_config_dict.items():
+                if k != 'env_config' or v is not None:
+                    env_config_new[k] = v
+            
+            # Handle env_config separately
+            if hasattr(env_config, 'env_config') and env_config.env_config:
+                if env_config_new.get('env_config') is None:
+                    env_config_new['env_config'] = {}
+                if isinstance(env_config.env_config, dict):
+                    env_config_new['env_config'].update(env_config.env_config)
+                else:
+                    # Convert to dict if needed
+                    env_config_dict_inner = asdict(env_config.env_config) if is_dataclass(env_config.env_config) else dict(env_config.env_config)
+                    env_config_new['env_config'].update(env_config_dict_inner)
+            
             env_instruction = env_config_new.get("env_instruction", "")
             observation_format = env_config_new.get("observation_format", "grid")
             if observation_format == "grid" and env_config_new.get("grid_vocab", False):
@@ -135,7 +166,26 @@ class ContextManager:
                 action_lookup_str += f"\nYou can make up to {env_config_new['max_actions_per_traj']} actions, separated by the action separator \" " + self.action_sep + " \"\n"
                 env_instruction += action_lookup_str
             prefixes[env_tag] = env_instruction
-            env_config_lookup[env_tag] = {'max_tokens': env_config.get("max_tokens", self.config.actor_rollout_ref.rollout.response_length)}
+            # Get attributes from env_config (handles both dict-like and object-like configs)
+            max_tokens = getattr(env_config, 'max_tokens', None) or (env_config_dict.get('max_tokens') if isinstance(env_config_dict, dict) else None) or self.config.actor_rollout_ref.rollout.response_length
+            env_config_inner = getattr(env_config, 'env_config', None) or env_config_dict.get('env_config', {}) if isinstance(env_config_dict, dict) else {}
+            data_source = ''
+            reward_type = 'em'
+            if env_config_inner:
+                if isinstance(env_config_inner, dict):
+                    data_source = env_config_inner.get('data_source', '')
+                    reward_type = env_config_inner.get('reward_type', 'em')
+                else:
+                    data_source = getattr(env_config_inner, 'data_source', '')
+                    reward_type = getattr(env_config_inner, 'reward_type', 'em')
+            
+            env_config_lookup[env_tag] = {
+                'max_tokens': max_tokens,
+                'env_type': env_config.env_type,
+                'max_model_len': getattr(self.config.actor_rollout_ref.rollout, 'max_model_len', None),
+                'data_source': data_source,
+                'reward_type': reward_type
+            }
 
         tags = self.es_cfg.env_configs.tags
         n_groups = self.es_cfg.env_configs.n_groups
@@ -155,6 +205,8 @@ class ContextManager:
         self.env_config_lookup = env_config_lookup
 
     def _parse_response(self, response: str) -> List:
+        # Note: We don't explicitly filter <information> tags - Search-R1 handles this implicitly
+        # by only parsing <search> or <answer> tags and truncating at </search> or </answer>
         pattern = r'<think>(.*?)</think>\s*<answer>(.*?)</answer>' if self.config.agent_proxy.enable_think else r'<answer>(.*?)</answer>'
         match = re.search(pattern, response, re.DOTALL)
         if not match:
@@ -1009,6 +1061,59 @@ class ContextManager:
             # Apply max length truncation
             messages = self._apply_max_length(messages, add_generation_prompt=True)
 
+                for idx, content in enumerate(history):
+                    actual_turn = idx + 1 + turn_offset
+                    messages[-1]["content"] += f"\nTurn {actual_turn}:\n"
+                    if "state" in content:
+                        FORMAT_PROMPT = "<think> [Your thoughts] </think> <answer> [your answer] </answer>" if self.config.agent_proxy.enable_think else "<answer> [your answer] </answer>"
+                        LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_output['env_id']]['max_tokens']} words (tokens)."
+                        warning = ""
+                        if content.get('manager_invalid_action'):
+                            warning = "No valid action provided previously. Environment state remains the same. Please try again.\n"
+                        messages[-1]["content"] += (
+                            f"State:\n{content['state']}\n{warning}"
+                            f"You have {content['actions_left']} actions left. Always output: {FORMAT_PROMPT} "
+                            f"with no extra text. Strictly follow this format. {LENGTH_PROMPT}\n"
+                        )
+                    if "llm_response" in content:
+                        messages.append({"role": "assistant", "content": content["llm_response"]})
+                    if "reward" in content and not (prepare_for_update and idx == len(history) - 1):
+                        messages.append({"role": "user", "content": f"Reward:\n{content['reward']}\n"})
+
+
+                # NOTE: this assertion is important for loss mask computation        
+                assert all(msg["role"] == "assistant" for msg in messages[2::2])
+
+                text = self.tokenizer.apply_chat_template(messages, add_generation_prompt=(not prepare_for_update), tokenize=False)
+                if not prepare_for_update:
+                    if self.config.agent_proxy.enable_think:
+                        text_with_prompt = text + "<think>"
+                    else:
+                        text_with_prompt = text + "<answer>"
+                else:
+                    text_with_prompt = text
+
+                if max_model_len is None:
+                    break
+                token_len = len(self.tokenizer(text_with_prompt, add_special_tokens=False)["input_ids"])
+                # vLLM requires prompt length to be strictly less than max_model_len
+                if token_len < max_model_len:
+                    break
+                if len(history) <= 1:
+                    logging.error(
+                        "The model in env %s has exceeded max_model_len %d in one turn (%d tokens). Please try to increase max_model_len.",
+                        env_output["env_id"], max_model_len, token_len,
+                    )
+                    break
+                history = history[1:]
+                truncated = True
+
+            if truncated:
+                env_output['history'] = history
+                logging.warning(
+                    "Truncated history for env %s to keep prompt within %d tokens (current %d).",
+                    env_output["env_id"], max_model_len, token_len,
+                )
             text = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
 
             # Add generation prompt prefix
@@ -1135,12 +1240,32 @@ class ContextManager:
             )
         else: # dataproto has textual responses
             responses = lm_outputs.non_tensor_batch['response_texts']
+        # Truncate responses at </search> or </answer> tags (following Search-R1 approach)
+        # This removes any extra tokens generated after the closing tag
+        responses = [
+            resp.split('</search>')[0] + '</search>'
+            if '</search>' in resp 
+            else resp.split('</answer>')[0] + '</answer>'
+            if '</answer>' in resp 
+            else resp
+            for resp in responses
+        ]
+        
         responses = ["<think>" + response if self.config.agent_proxy.enable_think else "<answer>" + response for response in responses] # The LLM generation does not include <think> tags. Add them back here.
             
         env_ids = lm_outputs.non_tensor_batch['env_ids']
         env_inputs = []
         for env_id, response in zip(env_ids, responses):
             llm_response, actions = self._parse_response(response)
+            
+            # For Search environment, pass the entire llm_response as a single action
+            # because the Search environment expects the full response with tags
+            env_config = self.env_config_lookup.get(env_id, {})
+            env_type = env_config.get('env_type', '')
+            if env_type == 'search':
+                # Pass the entire response as a single action for Search environment
+                actions = [llm_response] if llm_response else []
+            
             env_inputs.append({
                 "env_id": env_id,
                 "llm_raw_response": response,
