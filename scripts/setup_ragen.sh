@@ -96,12 +96,26 @@ main() {
             conda install -c "nvidia/label/cuda-12.4.0" cuda-toolkit -y
             export CUDA_HOME=$CONDA_PREFIX
         fi
-        
-        print_step "Installing PyTorch with CUDA support..."
-        pip install torch==2.5.0 --index-url https://download.pytorch.org/whl/cu124
-        
-        print_step "Installing flash-attention..."
-        pip3 install flash-attn==2.7.4.post1 --no-build-isolation
+
+        # Check for B200 (sm_100)
+        compute_cap=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n 1)
+        if [[ "$compute_cap" == "10.0" ]]; then
+            print_step "NVIDIA B200 detected (sm_100). Installing PyTorch nightly with cu128 support..."
+            pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+            
+            print_step "Installing compatible vLLM and Flash Attention for B200..."
+            pip install vllm==0.11.0
+            
+            # User fix for B200: Uninstall flashinfer and use specific flash-attn
+            python -m pip uninstall -y flashinfer-python flashinfer
+            python -m pip install --no-build-isolation --no-cache-dir "flash-attn==2.8.3"
+        else
+            print_step "Installing PyTorch with CUDA support..."
+            pip install torch==2.5.0 --index-url https://download.pytorch.org/whl/cu124
+            
+            print_step "Installing flash-attention..."
+            pip3 install flash-attn==2.7.4.post1 --no-build-isolation
+        fi
     else
         print_step "Installing PyTorch without CUDA support..."
         pip install torch==2.5.0
