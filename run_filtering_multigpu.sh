@@ -113,7 +113,7 @@ run_exps_for_algo() {
         echo "Skipping ${EXP_NAME} (Already Done)"
     else
         echo "Running Baseline: $EXP_NAME (No Filtering)"
-        timeout 2h python train.py --config-name "$ENV" \
+        python train.py --config-name "$ENV" \
             trainer.experiment_name="${EXP_NAME}" \
             actor_rollout_ref.rollout.rollout_filter_strategy="top_p" \
             actor_rollout_ref.rollout.rollout_filter_value=1.0 \
@@ -146,7 +146,7 @@ run_exps_for_algo() {
                     else
                         echo "Running Experiment: $EXP_NAME (Strategy: $strategy, Value: $value, Type: $ftype, IncludeZero: $inc_bool, Scaling: $scaling)"
 
-                        timeout 2h python train.py --config-name "$ENV" \
+                        python train.py --config-name "$ENV" \
                             trainer.experiment_name="${EXP_NAME}" \
                             actor_rollout_ref.rollout.rollout_filter_strategy="${strategy}" \
                             actor_rollout_ref.rollout.rollout_filter_value=${value} \
