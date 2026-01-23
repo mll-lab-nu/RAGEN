@@ -81,7 +81,25 @@ Controlled via `actor_rollout_ref.actor.filter_loss_scaling`:
 
 ---
 
-## 3. Running Experiments
+## 3. Reward Variance Early Stopping
+To prevent training on collapsed or uninformative rollout groups, we implemented an early stopping mechanism based on reward variance.
+
+### Concept
+The trainer monitors the reward standard deviation (`rollout/in_group_reward_std`) across all rollout attempts (successful steps and retries).
+
+1.  **Baseline Generation**: During the first 10 successful steps, the trainer calculates the average reward variance ($V_{base}$).
+2.  **Monitoring**: A sliding window of the last 10 rollout attempts is maintained.
+3.  **Stopping Condition**: If all 10 consecutive attempts have a reward variance less than 10% of $V_{base}$, training is stopped.
+    $$ \forall i \in \{1 \dots 10\}: V_i < 0.1 \times V_{base} \implies \text{Stop Training} $$
+
+### Implementation
+-   **Baseline**: Average of `rollout/in_group_reward_std` for `global_steps` 1-10.
+-   **Sliding Window**: Uses a `collections.deque(maxlen=10)` to track the most recent attempts across multiple global steps if retries occur.
+-   **Metric**: Logs `train/early_stopped: 1.0` when triggered.
+
+---
+
+## 4. Running Experiments
 A unified script `run_filtering_exps.sh` is provided to run grid search experiments.
 
 ### Usage
@@ -113,8 +131,9 @@ Results are saved to `results/` with subdirectories named after the experiment:
 
 ---
 
-## 4. Code References
+## 5. Code References
 -   **Filtering Logic**: `ragen/trainer/rollout_filter.py`
 -   **Trainer Integration**: `ragen/trainer/agent_trainer.py`
+-   **Early Stopping Logic**: `RayAgentTrainer` in `ragen/trainer/agent_trainer.py`
 -   **Loss Scaling Implementation**: `verl/verl/workers/actor/dp_actor.py` (specifically `DataParallelPPOActor.update_policy`)
 -   **Configuration**: `config/base.yaml` and `verl/verl/workers/config/actor.py`

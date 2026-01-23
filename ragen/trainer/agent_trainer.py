@@ -8,6 +8,7 @@ import uuid
 import ray
 import torch
 import numpy as np
+import collections
 from collections import defaultdict
 from omegaconf import OmegaConf, open_dict
 from torch.utils.data import Dataset, Sampler
@@ -239,6 +240,12 @@ class RayAgentTrainer(VerlRayPPOTrainer):
         self.ref_in_actor = config.actor_rollout_ref.model.get('lora_rank', 0) > 0
         # do not use the original val logger, but use this here
         self.generations_logger = GenerationsLogger()
+        
+        # Early stopping state
+        self.first_10_steps_variances = []
+        self.base_variance = None
+        self.consecutive_variances = collections.deque(maxlen=10)
+        self.early_stopped = False
 
         
     def _create_dataloader(self, train_dataset, val_dataset, collate_fn, train_sampler):
@@ -647,12 +654,37 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                         else:
                             batch.meta_info["filter_kept_ratio"] = 1.0
 
+                        # Early stopping logic: track reward variance of every attempt
+                        if "rollout/in_group_reward_std" in metrics:
+                            current_var = metrics["rollout/in_group_reward_std"]
+                            if isinstance(current_var, torch.Tensor):
+                                current_var = current_var.item()
+                            self.consecutive_variances.append(current_var)
+                            
+                            if self.base_variance is not None and len(self.consecutive_variances) == 10:
+                                if all(v < 0.1 * self.base_variance for v in self.consecutive_variances):
+                                    print(f"\n[Early Stopping] Reward variance collapsed!")
+                                    print(f"Base variance (mean of first 10 steps): {self.base_variance:.6f}")
+                                    print(f"Recent variances: {[f'{v:.6f}' for v in self.consecutive_variances]}")
+                                    self.early_stopped = True
+                                    break
+
 
                         
                         if len(batch) > 0:
                             break
                         else:
                             print(f"[Warning] Attempt {attempts}/{max_attempts}: all samples filtered out. Retrying rollout...")
+                    
+                    if self.early_stopped:
+                        break
+
+                if self.early_stopped:
+                    print("[Early Stopping] Stopping training.")
+                    # Ensure we log the metric before finishing
+                    metrics.update({"train/early_stopped": 1.0})
+                    logger.log(data=metrics, step=self.global_steps)
+                    break
 
                 if len(batch) == 0:
                     # print(f"[Error] Failed to find any valid samples after {max_attempts} attempts. Skipping this training step.")
@@ -675,6 +707,16 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                     "train/rollout_attempts": attempts
                 })
                 metrics.update({"train/" + key: value for key, value in batch.meta_info["metrics"].items()})
+
+                # Record successful step variance for base variance calculation
+                if "rollout/in_group_reward_std" in metrics and len(self.first_10_steps_variances) < 10:
+                    current_var = metrics["rollout/in_group_reward_std"]
+                    if isinstance(current_var, torch.Tensor):
+                        current_var = current_var.item()
+                    self.first_10_steps_variances.append(current_var)
+                    if len(self.first_10_steps_variances) == 10:
+                        self.base_variance = sum(self.first_10_steps_variances) / 10
+                        print(f"\n[Early Stopping] Base variance calculated from first 10 steps: {self.base_variance:.6f}")
 
                 inputs, outputs, scores = _process_batch_for_logging(batch)
                 # self._maybe_log_generations(inputs=inputs, outputs=outputs, scores=scores, _type="train")
