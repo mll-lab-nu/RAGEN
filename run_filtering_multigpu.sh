@@ -5,6 +5,8 @@ set -euo pipefail
 ALGO="${1:-grpo}" # default to grpo
 METRIC="${2:-reward_variance}" # default to reward_variance
 EXP_NAME="final0123"
+DONE_LIST="filter_exp_donelist.txt"
+touch "$DONE_LIST"
 
 # -----------------------
 # GPU autodetect + CUDA_VISIBLE_DEVICES
@@ -74,7 +76,7 @@ get_common_flags() {
 }
 
 ENV="_2_sokoban"
-OUTPUT_DIR="/mnt/permanent/deimos/20260120_sokoban_filters"
+OUTPUT_DIR="/mnt/permanent/xjin/20260120_sokoban_filters"
 mkdir -p "$OUTPUT_DIR"
 
 # Define configurations to iterate
@@ -117,24 +119,27 @@ run_exps_for_algo() {
     echo "========================================"
 
     # 1. Baseline: No Filtering
-    # local base_exp_name="soko_3b_${alg_name}_${metric}_nofilter"
-    # mkdir -p "${OUTPUT_DIR}/${base_exp_name}"
-    # if [ -f "${OUTPUT_DIR}/${base_exp_name}/DONE" ]; then
-    #     echo "Skipping ${base_exp_name} (Already Done)"
-    # else
-    #     echo "Running Baseline: $base_exp_name (No Filtering)"
-    #     python train.py --config-name "$ENV" \
-    #         trainer.experiment_name="${base_exp_name}" \
-    #         actor_rollout_ref.rollout.rollout_filter_strategy="top_p" \
-    #         actor_rollout_ref.rollout.rollout_filter_value=1.0 \
-    #         actor_rollout_ref.rollout.rollout_filter_type="largest" \
-    #         actor_rollout_ref.rollout.rollout_filter_include_zero=True \
-    #         $alg_flag \
-    #         $common_flags \
-    #         trainer.default_local_dir="${OUTPUT_DIR}/${base_exp_name}"
-
-    #     touch "${OUTPUT_DIR}/${base_exp_name}/DONE"
-    # fi
+    local base_exp_name="soko_3b_${alg_name}_${metric}_nofilter"
+    mkdir -p "${OUTPUT_DIR}/${base_exp_name}"
+    if grep -q "^${base_exp_name}$" "$DONE_LIST"; then
+        echo "Skipping ${base_exp_name} (Already in done-list)"
+    else
+        echo "Running Baseline: $base_exp_name (No Filtering)"
+        if python train.py --config-name "$ENV" \
+            trainer.experiment_name="${base_exp_name}" \
+            actor_rollout_ref.rollout.rollout_filter_strategy="top_p" \
+            actor_rollout_ref.rollout.rollout_filter_value=1.0 \
+            actor_rollout_ref.rollout.rollout_filter_type="largest" \
+            actor_rollout_ref.rollout.rollout_filter_include_zero=True \
+            $alg_flag \
+            $common_flags \
+            trainer.default_local_dir="${OUTPUT_DIR}/${base_exp_name}"; then
+            
+            echo "$base_exp_name" >> "$DONE_LIST"
+        else
+            echo "ERROR: Baseline $base_exp_name failed. Continuing..." >&2
+        fi
+    fi
 
     # 2. Grid Search
     for config_str in "${CONFIGS[@]}"; do
@@ -151,12 +156,12 @@ run_exps_for_algo() {
 
                     local exp_name="soko_3b_${alg_name}_${metric}_${stra_suffix}_${type_suffix}_${inc_suffix}_${scale_suffix}"
                     mkdir -p "${OUTPUT_DIR}/${exp_name}"
-                    if [ -f "${OUTPUT_DIR}/${exp_name}/DONE" ]; then
-                        echo "Skipping ${exp_name} (Already Done)"
+                    if grep -q "^${exp_name}$" "$DONE_LIST"; then
+                        echo "Skipping ${exp_name} (Already in done-list)"
                     else
                         echo "Running Experiment: $exp_name (Strategy: $strategy, Value: $value, Type: $ftype, IncludeZero: $inc_bool, Scaling: $scaling)"
 
-                        python train.py --config-name "$ENV" \
+                        if python train.py --config-name "$ENV" \
                             trainer.experiment_name="${exp_name}" \
                             actor_rollout_ref.rollout.rollout_filter_strategy="${strategy}" \
                             actor_rollout_ref.rollout.rollout_filter_value=${value} \
@@ -165,9 +170,12 @@ run_exps_for_algo() {
                             actor_rollout_ref.actor.filter_loss_scaling="${scaling}" \
                             $alg_flag \
                             $common_flags \
-                            trainer.default_local_dir="${OUTPUT_DIR}/${exp_name}"
-
-                        touch "${OUTPUT_DIR}/${exp_name}/DONE"
+                            trainer.default_local_dir="${OUTPUT_DIR}/${exp_name}"; then
+                            
+                            echo "$exp_name" >> "$DONE_LIST"
+                        else
+                            echo "ERROR: Experiment $exp_name failed. Continuing..." >&2
+                        fi
                     fi
                 done
             done
