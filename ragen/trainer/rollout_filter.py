@@ -121,16 +121,35 @@ class RolloutFilter:
             return indices[top_groups_local_indices]
 
         elif self.strategy == "min_p":
-            # min-p: take all groups > max_score * value
-            max_score = scores.max()
-            threshold = max_score * self.config.value
+            if self.filter_type == "largest":
+                max_score = scores.max()
+                threshold = max_score * self.config.value
+                mask = scores >= (threshold - 1e-10)
+            elif self.filter_type == "smallest":
+                min_score = scores.min()
+                # For smallest, we keep groups whose score is "close enough" to the minimum.
+                # If value=0.5 and min=0.1, threshold=0.2. We keep scores <= 0.2.
+                threshold = min_score / (self.config.value + 1e-10)
+                mask = scores <= (threshold + 1e-10)
+            else:
+                raise ValueError(f"Invalid rollout filter type: {self.filter_type}")
             
-            # Note: This logic assumes 'largest' semantics generally for min_p thresholding
-            # If strictly following 'smallest', we might want < min_score / value? 
-            # But keeping previous behavior: selection based on score magnitude relative to max.
-            
-            mask = scores > threshold
             return indices[mask]
+
+        elif self.strategy == "top_f":
+            # top-f: choose top f fraction of the groups
+            k = int(self.config.value * self.num_groups)
+            k = min(k, indices.numel())
+            k = max(k, 1) # Ensure at least 1
+            
+            if self.filter_type == "smallest":
+                top_groups_local_indices = (-scores).topk(k).indices
+            elif self.filter_type == "largest":
+                top_groups_local_indices = scores.topk(k).indices
+            else:
+                raise ValueError(f"Invalid rollout filter type: {self.filter_type}")
+            
+            return indices[top_groups_local_indices]
             
         else:
              raise ValueError(f"Unknown strategy: {self.strategy}")

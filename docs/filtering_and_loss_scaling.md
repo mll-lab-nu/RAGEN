@@ -33,8 +33,22 @@ We have implemented three strategies to filter rollout groups based on their rew
     ```
 -   **Behavior**: A simple sorting and slicing operation.
 
+### `top_f`
+-   **Description**: Selects the top `f` fraction of groups with the highest (or lowest) scores. For example, `value=0.5` would keep the top 50% of groups.
+-   **Configuration**:
+    ```yaml
+    actor_rollout_ref:
+      rollout:
+        rollout_filter_strategy: top_f
+        rollout_filter_value: 0.5  # Keep top 50% of groups
+    ```
+-   **Behavior**: Groups are sorted by score, and the top `N * value` groups are selected.
+
 ### `min_p`
 -   **Description**: Selects groups whose score is at least a fraction `value` of the maximum score in the batch.
+-   **Behavior**:
+    -   **`largest`**: Keeps groups where $\text{score} \ge \text{max\_score} \cdot \text{value}$.
+    -   **`smallest`**: Keeps groups where $\text{score} \le \text{min\_score} / \text{value}$.
 -   **Configuration**:
     ```yaml
     actor_rollout_ref:
