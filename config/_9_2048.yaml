@@ -1,0 +1,27 @@
+defaults:
+  - base
+
+system:
+  CUDA_VISIBLE_DEVICES: "0,1,2,3"
+
+trainer:
+  experiment_name: 2048
+  n_gpus_per_node: 8
+
+agent_proxy:
+  max_turn: 700
+  max_actions_per_turn: 1
+  max_context_window: 5
+
+actor_rollout_ref:
+  rollout:
+    max_model_len: 8192
+    response_length: 256
+
+es_manager:
+  train:
+    env_configs:
+      tags: ["game_2048"]
+  val:
+    env_configs:
+      tags: ["game_2048"]

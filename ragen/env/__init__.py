@@ -14,6 +14,10 @@ from .lean.config import LeanEnvConfig
 from .lean.env import LeanEnv
 from .sudoku.config import SudokuEnvConfig
 from .sudoku.env import SudokuEnv
+from .game_2048.config import Game2048EnvConfig
+from .game_2048.env import Game2048Env
+from .rubikscube.config import RubiksCube2x2Config
+from .rubikscube.env import RubiksCube2x2Env
 
 
 REGISTERED_ENVS = {
@@ -25,6 +29,8 @@ REGISTERED_ENVS = {
     'metamathqa': MetaMathQAEnv,
     'lean': LeanEnv,
     'sudoku': SudokuEnv,
+    'game_2048': Game2048Env,
+    'rubikscube': RubiksCube2x2Env,
 }
 
 REGISTERED_ENV_CONFIGS = {
@@ -36,6 +42,8 @@ REGISTERED_ENV_CONFIGS = {
     'metamathqa': MetaMathQAEnvConfig,
     'lean': LeanEnvConfig,
     'sudoku': SudokuEnvConfig,
+    'game_2048': Game2048EnvConfig,   
+    'rubikscube': RubiksCube2x2Config,
 }
 
 try:

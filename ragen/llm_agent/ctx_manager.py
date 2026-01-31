@@ -379,6 +379,29 @@ class ContextManager:
             key: np.sum(value) / self.env_nums.get(key.split("/")[0], 1)
             for key, value in metrics.items()
         }
+        try:
+            # charts/avg_episode_return: average across all 2048 env groups
+            ep_keys = [k for k in metrics.keys() if k.endswith('/episodic_return')]
+            if len(ep_keys) > 0:
+                ep_vals = []
+                for k in ep_keys:
+                    tag = k.split('/')[0]
+                    denom = self.env_nums.get(tag, max(1, len(metrics[k])))
+                    ep_vals.append(float(np.sum(metrics[k]) / denom))
+                mean_metrics["charts/avg_episode_return"] = float(np.mean(ep_vals))
+        except Exception:
+            pass
+        try:
+            # rollout/max_tile: max over all envs in this batch
+            tile_keys = [k for k in metrics.keys() if k.endswith('/max_tile')]
+            if len(tile_keys) > 0:
+                tile_vals = []
+                for k in tile_keys:
+                    tile_vals.extend(metrics[k])
+                if len(tile_vals) > 0:
+                    mean_metrics["rollout/max_tile"] = int(np.max(tile_vals))
+        except Exception:
+            pass
         for key, values in metrics.items():
             if not isinstance(values, list):
                 continue

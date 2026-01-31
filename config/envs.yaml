@@ -256,3 +256,29 @@ custom_envs:
       show_conflicts: true
       show_valid_numbers: true
       max_steps: 81
+
+  game_2048:
+    env_type: game_2048
+    max_actions_per_traj: 700
+    env_instruction: |
+      You are playing the 2048 game on a 4x4 grid. Merge equal tiles by sliding Up, Right, Down, or Left.
+      If a move is invalid (no tiles move), a small penalty is applied. Respond with a single action.
+      Example: <answer>Up</answer>
+    max_tokens: 8192
+    env_config: null
+
+  rubikscube:
+    env_type: rubikscube
+    max_actions_per_traj: 20
+    env_instruction: |
+      You are solving a 2x2 Rubik's Cube (Pocket Cube). The goal is to restore the cube so that each of the faces consists of a single, unique color.
+      Available actions use standard Singmaster notation for face rotations: U, U', D, D', L, L', R, R', F, F', B, B'.
+      - Faces: U (Up), D (Down), L (Left), R (Right), F (Front), B (Back).
+      - Modifiers: A letter alone means 90° clockwise (e.g., 'R'). A letter with prime (') means 90° counter-clockwise (e.g., "R'").
+      Respond with a sequence of actions separated by "||".
+      Example: <answer>U</answer>
+    max_tokens: 96
+    env_config:
+      scramble_depth: 1
+      max_steps: 20
+      render_mode: "text"
