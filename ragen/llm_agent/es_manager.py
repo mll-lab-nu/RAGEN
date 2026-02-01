@@ -182,6 +182,7 @@ class EnvStateManager:
         """
         def _execute_actions(env, actions):
             acc_reward, turn_info, turn_done = 0, {}, False
+            raw_acc_reward = 0.0
             executed_actions = []
             for action in actions:
                 _, reward, done, info = env.step(action)

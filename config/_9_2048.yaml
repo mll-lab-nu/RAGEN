@@ -1,12 +1,8 @@
 defaults:
   - base
 
-system:
-  CUDA_VISIBLE_DEVICES: "0,1,2,3"
-
 trainer:
   experiment_name: 2048
-  n_gpus_per_node: 8
 
 agent_proxy:
   max_turn: 700
