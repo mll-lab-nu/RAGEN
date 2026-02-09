@@ -44,7 +44,6 @@ class Game2048Env(BaseDiscreteActionEnv, gym.Env):
     def step(self, action: int) -> Tuple[Any, float, bool, Dict]:
         assert action in self.ACTION_LOOKUP, f"Invalid action: {action}"
         
-        prev_grid = self.grid.copy()
         reward_merge, moved = self._move(action)
         
         terminated = False
@@ -149,7 +148,6 @@ class Game2048Env(BaseDiscreteActionEnv, gym.Env):
 
     def _move(self, action: int) -> Tuple[int, bool]:
         grid = self.grid
-        before = grid.copy()
         reward, moved = self._move_sim(grid, action)
         return reward, moved
 
@@ -213,8 +211,6 @@ if __name__ == "__main__":
         }
         
         for t in range(steps):
-            actions = env.get_all_actions()
-            # a = np.random.choice(actions)
             valid_input = False
             a = 0
             while not valid_input:

@@ -9,7 +9,7 @@ class RubiksCube2x2Env(BaseDiscreteActionEnv, gym.Env):
     """
     2x2 Pocket Cube Environment for LLM-based RL.
     State: 24 integers representing the stickers.
-    Reward: +1.0 for solved, -0.01 per step to encourage efficiency.
+    Reward: +1.0 for solved, 0.0 otherwise.
     """
     def __init__(self, config: RubiksCube2x2Config | None = None):
         BaseDiscreteActionEnv.__init__(self)
