@@ -58,8 +58,10 @@ main() {
 
     # Install package in editable mode
     print_step "setting up verl..."
-    git submodule init
-    git submodule update
+    # Only init/update specific submodules to avoid errors from
+    # submodules that are commented out in .gitmodules but still in the git tree
+    git submodule init verl external/webshop-minimal external/kimina-lean-server
+    git submodule update verl external/webshop-minimal external/kimina-lean-server
     cd verl
     pip install -e . --no-dependencies # we put dependencies in requirements.txt
     cd ..
@@ -69,8 +71,8 @@ main() {
     pip install -e .
 
     # Install spatial environment dependencies
-    print_step "Installing spatial environment dependencies..."
-    pip install -e ragen/env/spatial/Base
+    # print_step "Installing spatial environment dependencies..."
+    # pip install -e ragen/env/spatial/Base
     
     # Install PyTorch with CUDA if available
     if check_cuda; then
