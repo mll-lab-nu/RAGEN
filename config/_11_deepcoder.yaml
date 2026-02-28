@@ -1,0 +1,17 @@
+defaults:
+  - base
+
+trainer:
+  experiment_name: deepcoder
+
+agent_proxy:
+  max_turn: 1
+  max_actions_per_turn: 1
+
+es_manager:
+  train:
+    env_configs:
+      tags: ["DeepCoder"]
+  val:
+    env_configs:
+      tags: ["DeepCoder"]

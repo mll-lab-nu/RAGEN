@@ -282,3 +282,11 @@ custom_envs:
       scramble_depth: 1
       max_steps: 20
       render_mode: "text"
+
+  DeepCoder:
+    env_type: deepcoder
+    max_actions_per_traj: 1
+    env_instruction: "You are solving a coding task. Provide a complete Python function solution only. Format: <answer>...</answer>"
+    max_tokens: 400
+    env_config:
+      max_steps: 1
