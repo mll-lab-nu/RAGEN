@@ -62,9 +62,9 @@ custom_envs:
     max_actions_per_traj: 10
     env_instruction: |
       You are solving the Sokoban puzzle. You are the player and you need to push all boxes to targets.
-      You are provided with a symbol grid and the zero-indexed coordinates of the player, each box, and each target. 
-      Coordinates range from the top-left corner (0, 0) to the bottom-right corner (5, 5). 
-      When you are exactly next to a box, you can push it by moving in the same direction. 
+      You are provided with a symbol grid and the zero-indexed coordinates of the player, each box, and each target.
+      Row index increases downward (row 0 is the top row), column index increases rightward (col 0 is the leftmost column).
+      When you are exactly next to a box, you can push it by moving in the same direction.
       You cannot push a box through a wall, and you cannot pull a box.
       The answer should be a sequence of actions, like <answer>Right || Right || Up</answer>.
     max_tokens: 120

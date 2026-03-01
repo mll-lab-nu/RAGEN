@@ -469,9 +469,9 @@ class ContextManager:
     def _build_format_prompt(self, env_id: int) -> Tuple[str, str]:
         """Build FORMAT_PROMPT and LENGTH_PROMPT for an environment."""
         FORMAT_PROMPT = (
-            "<think> [Your thoughts] </think> <answer> [your answer] </answer>"
+            "<think>...</think><answer>...</answer>"
             if self.config.agent_proxy.enable_think
-            else "<answer> [your answer] </answer>"
+            else "<answer>...</answer>"
         )
         LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_id]['max_tokens']} words (tokens)."
         return FORMAT_PROMPT, LENGTH_PROMPT
@@ -756,12 +756,13 @@ class ContextManager:
                 content += f"Turn {actual_turn} State:\n{h_turn.get('state', '')}\n"
                 content += f"Turn {actual_turn} Action: {h_turn.get('llm_response', '')}\n"
                 if 'reward' in h_turn:
-                    content += f"Turn {actual_turn} Reward: {h_turn['reward']}\n"
+                    displayed_reward = h_turn['reward'] + (self.config.es_manager.format_penalty if h_turn.get('manager_invalid_action', False) else 0.0)
+                    content += f"Turn {actual_turn} Reward: {displayed_reward}\n"
                 content += "---\n"
 
         actual_turn = turn_idx + 1 + turn_offset
         current_turn_prefix = "Current Turn " if history_start < turn_idx else ""
-        FORMAT_PROMPT = "<think> [Your thoughts] </think> <answer> [your answer] </answer>" if self.config.agent_proxy.enable_think else "<answer> [your answer] </answer>"
+        FORMAT_PROMPT = "<think>...</think><answer>...</answer>" if self.config.agent_proxy.enable_think else "<answer>...</answer>"
         LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_output['env_id']]['max_tokens']} words (tokens)."
         warning = ""
         if include_warning and history[turn_idx].get('manager_invalid_action'):
@@ -954,7 +955,8 @@ class ContextManager:
 
                     # Add reward for non-final turns
                     if h_idx < turn_idx and 'reward' in h_turn:
-                        messages.append({"role": "user", "content": f"Reward:\n{h_turn['reward']}\n"})
+                        displayed_reward = h_turn['reward'] + (self.config.es_manager.format_penalty if h_turn.get('manager_invalid_action', False) else 0.0)
+                        messages.append({"role": "user", "content": f"Reward:\n{displayed_reward}\n"})
 
                 # Apply max length truncation
                 messages = self._apply_max_length(messages, add_generation_prompt=False)
@@ -1017,7 +1019,8 @@ class ContextManager:
                 if "llm_response" in content:
                     messages.append({"role": "assistant", "content": content["llm_response"]})
                 if "reward" in content and idx < len(history) - 1:
-                    messages.append({"role": "user", "content": f"Reward:\n{content['reward']}\n"})
+                    displayed_reward = content['reward'] + (self.config.es_manager.format_penalty if content.get('manager_invalid_action', False) else 0.0)
+                    messages.append({"role": "user", "content": f"Reward:\n{displayed_reward}\n"})
 
             # Apply max length truncation
             messages = self._apply_max_length(messages, add_generation_prompt=False)
@@ -1209,7 +1212,8 @@ class ContextManager:
             if "llm_response" in content:
                 messages.append({"role": "assistant", "content": content["llm_response"]})
             if "reward" in content:
-                messages.append({"role": "user", "content": f"Reward:\n{content['reward']}\n"})
+                displayed_reward = content['reward'] + (self.config.es_manager.format_penalty if content.get('manager_invalid_action', False) else 0.0)
+                messages.append({"role": "user", "content": f"Reward:\n{displayed_reward}\n"})
 
         return messages
 

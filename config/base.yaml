@@ -120,7 +120,7 @@ agent_proxy:
     method: "identity" # asym_clip / identity / mean_std
 
 es_manager:
-  format_penalty: -0.1
+  format_penalty: -0.5
   train:
     env_groups: 8
     # under the same group, the env config and env seed are ensured to be equal
