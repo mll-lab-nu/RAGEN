@@ -494,6 +494,7 @@ class ContextManager:
         turn_offset: int,
         include_warning: bool,
         include_assistant: bool,
+        old_history_summary: Optional[str] = None,
     ) -> List[Dict]:
         messages = [
             {"role": "system", "content": self._build_system_content(env_output["env_id"])},
@@ -506,6 +507,7 @@ class ContextManager:
             history_start=history_start,
             turn_offset=turn_offset,
             include_warning=include_warning,
+            old_history_summary=old_history_summary,
         )
         if include_assistant:
             messages.append({"role": "assistant", "content": history[turn_idx]["llm_response"]})
@@ -660,6 +662,66 @@ class ContextManager:
 
     # ==================== End Mask Computation ====================
 
+    # ==================== Summary Memory ====================
+
+    def _build_episode_summary(self, old_history: List[Dict]) -> str:
+        """
+        Build a compact template-based summary of turns that fall outside the
+        recent context window.  Called when enable_summary_memory=True and
+        there is history before history_start.
+
+        Args:
+            old_history: history entries (each a dict) for turns BEFORE the
+                         recent window, i.e. history[:history_start].
+
+        Returns:
+            A short multi-line string (~60-100 tokens) summarising what
+            happened in those turns, or "" if old_history is empty.
+        """
+        if not old_history:
+            return ""
+
+        n = len(old_history)
+
+        # --- collect actions ---
+        all_actions: List[str] = []
+        for h in old_history:
+            all_actions.extend(h.get("actions", []))
+
+        # --- effectiveness ---
+        effective_count = sum(
+            1 for h in old_history
+            if h.get("info", {}).get("action_is_effective", False)
+        )
+
+        # --- reward ---
+        total_reward = sum(h.get("reward", 0.0) for h in old_history)
+
+        # --- success flag (any turn solved the puzzle) ---
+        any_success = any(
+            h.get("info", {}).get("success", False) for h in old_history
+        )
+
+        # --- invalid-format action count ---
+        invalid_count = sum(
+            1 for h in old_history if h.get("manager_invalid_action", False)
+        )
+
+        lines = [
+            f"[Memory: {n} earlier step(s) summarized, not shown in full]",
+            f"Actions tried: {', '.join(all_actions) if all_actions else 'none'}",
+            f"Effective moves: {effective_count}/{len(all_actions)}",
+            f"Cumulative reward from these steps: {total_reward:.2f}",
+        ]
+        if invalid_count > 0:
+            lines.append(f"Invalid action format: {invalid_count} time(s)")
+        if any_success:
+            lines.append("Note: puzzle was already solved during these steps.")
+
+        return "\n".join(lines)
+
+    # ==================== End Summary Memory ====================
+
     def _build_single_turn_user_content(
         self,
         env_output: Dict,
@@ -668,17 +730,26 @@ class ContextManager:
         history_start: int,
         turn_offset: int = 0,
         include_warning: bool = False,
+        old_history_summary: Optional[str] = None,
     ) -> str:
         content = ""
 
         if history_start < turn_idx:
             completed_steps = turn_idx + turn_offset
             history_length = turn_idx - history_start
-            content += (
-                f"Summary: {completed_steps} step(s) completed so far. "
-                f"Showing the last {history_length} turn(s) with state/action/reward details. "
-            )
-            content += "Recent turns:\n---\n"
+            if old_history_summary is not None:
+                # Summary memory mode: show compact summary of old turns, then recent window in full
+                content += old_history_summary + "\n\n"
+                content += (
+                    f"Recent {history_length} turn(s) (full detail):\n---\n"
+                )
+            else:
+                # Default: simple counter + recent window in full
+                content += (
+                    f"Summary: {completed_steps} step(s) completed so far. "
+                    f"Showing the last {history_length} turn(s) with state/action/reward details. "
+                )
+                content += "Recent turns:\n---\n"
             for h_idx in range(history_start, turn_idx):
                 actual_turn = h_idx + 1 + turn_offset
                 h_turn = history[h_idx]
@@ -762,6 +833,13 @@ class ContextManager:
                     include_assistant=True,
                     add_generation_prompt=False,
                 )
+
+                # Summary memory: summarise turns outside the recent window
+                enable_summary = getattr(self.config.agent_proxy, "enable_summary_memory", False)
+                old_history_summary = None
+                if enable_summary and history_start > 0:
+                    old_history_summary = self._build_episode_summary(history[:history_start])
+
                 messages = self._build_single_turn_messages(
                     env_output=env_output,
                     history=history,
@@ -770,6 +848,7 @@ class ContextManager:
                     turn_offset=0,
                     include_warning=False,
                     include_assistant=True,
+                    old_history_summary=old_history_summary,
                 )
 
                 text = self.tokenizer.apply_chat_template(messages, add_generation_prompt=False, tokenize=False)
@@ -853,6 +932,13 @@ class ContextManager:
                 ]
 
                 history_start = self._get_history_start(turn_idx, max_context_window)
+
+                # Summary memory for limited_multi_turn
+                enable_summary = getattr(self.config.agent_proxy, "enable_summary_memory", False)
+                if enable_summary and history_start > 0:
+                    old_summary = self._build_episode_summary(history[:history_start])
+                    messages[1]["content"] = old_summary + "\n\n"
+
                 # Add all turns from history_start to turn_idx (inclusive)
                 for h_idx in range(history_start, turn_idx + 1):
                     h_turn = history[h_idx]
@@ -991,17 +1077,36 @@ class ContextManager:
 
             # Apply context window for non-full modes
             turn_offset = 0
+            old_history_for_summary: List[Dict] = []
             if context_window_mode in ("single_turn", "limited_multi_turn"):
                 if resolved_max_context_window is not None and resolved_max_context_window > 0:
                     if len(history) > resolved_max_context_window:
                         turn_offset = len(history) - resolved_max_context_window
+                        old_history_for_summary = history[:turn_offset]  # save before truncation
                         history = history[-resolved_max_context_window:]
 
             if context_window_mode == "single_turn":
-                messages = self._build_infer_single_turn_messages(
-                    env_output, history, turn_offset, resolved_max_context_window
+                enable_summary = getattr(self.config.agent_proxy, "enable_summary_memory", False)
+                old_history_summary = (
+                    self._build_episode_summary(old_history_for_summary)
+                    if enable_summary and old_history_for_summary
+                    else None
                 )
-            else:  # full or limited_multi_turn
+                messages = self._build_infer_single_turn_messages(
+                    env_output, history, turn_offset, resolved_max_context_window,
+                    old_history_summary=old_history_summary,
+                )
+            elif context_window_mode == "limited_multi_turn":
+                enable_summary = getattr(self.config.agent_proxy, "enable_summary_memory", False)
+                old_history_summary = (
+                    self._build_episode_summary(old_history_for_summary)
+                    if enable_summary and old_history_for_summary
+                    else None
+                )
+                messages = self._build_infer_multi_turn_messages(
+                    env_output, history, turn_offset, old_history_summary=old_history_summary
+                )
+            else:  # full
                 messages = self._build_infer_multi_turn_messages(
                     env_output, history, turn_offset
                 )
@@ -1045,6 +1150,7 @@ class ContextManager:
         history: List[Dict],
         turn_offset: int,
         max_context_window: Optional[int],
+        old_history_summary: Optional[str] = None,
     ) -> List[Dict]:
         """Build messages for single_turn inference."""
         messages = [
@@ -1074,6 +1180,7 @@ class ContextManager:
             turn_offset=turn_offset,
             include_warning=True,
             include_assistant=False,
+            old_history_summary=old_history_summary,
         )
         return messages
 
@@ -1082,11 +1189,15 @@ class ContextManager:
         env_output: Dict,
         history: List[Dict],
         turn_offset: int,
+        old_history_summary: Optional[str] = None,
     ) -> List[Dict]:
         """Build messages for multi-turn inference (full or limited_multi_turn)."""
+        first_user_content = ""
+        if old_history_summary:
+            first_user_content = old_history_summary + "\n\n"
         messages = [
             {"role": "system", "content": self._build_system_content(env_output["env_id"])},
-            {"role": "user", "content": ""}
+            {"role": "user", "content": first_user_content}
         ]
 
         for idx, content in enumerate(history):
