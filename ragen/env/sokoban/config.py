@@ -20,6 +20,10 @@ class SokobanEnvConfig:
     # Reward shaping: only used when ignore_gym_reward=True
     success_reward: float = 1.0   # total reward given on success (replaces gym reward)
     ignore_gym_reward: bool = False  # if True, reward = success_reward on success, 0 otherwise
+    # Distance-based reward shaping: added on top of gym/success reward
+    # reward += (prev_box_target_dist - new_box_target_dist) * distance_reward_coeff
+    # 0.0 = disabled (default). Try 0.1~0.5 to encourage box movement toward target.
+    distance_reward_coeff: float = 0.0
 
     def __post_init__(self):
         if self.dim_x is not None and self.dim_y is not None:

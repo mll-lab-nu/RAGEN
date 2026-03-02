@@ -78,14 +78,30 @@ class SokobanEnv(BaseDiscreteActionEnv, GymSokobanEnv):
         self.player_position = np.argwhere(self.room_state == 5)[0]
         return self.render()
         
+    def _box_target_distance(self):
+        """Sum of Manhattan distances from each box to its nearest target."""
+        box_positions = np.argwhere((self.room_state == 4) | (self.room_state == 3))
+        target_positions = np.argwhere(self.room_fixed == 2)
+        if len(box_positions) == 0 or len(target_positions) == 0:
+            return 0
+        return sum(
+            min(abs(b[0] - t[0]) + abs(b[1] - t[1]) for t in target_positions)
+            for b in box_positions
+        )
+
     def step(self, action: int):
         previous_pos = self.player_position
+        if self.config.distance_reward_coeff != 0.0:
+            prev_dist = self._box_target_distance()
         _, gym_reward, done, _ = GymSokobanEnv.step(self, action)
         success = self.boxes_on_target == self.num_boxes
         if self.config.ignore_gym_reward:
             reward = self.config.success_reward if success else 0.0
         else:
             reward = gym_reward
+        if self.config.distance_reward_coeff != 0.0:
+            new_dist = self._box_target_distance()
+            reward += (prev_dist - new_dist) * self.config.distance_reward_coeff
         next_obs = self.render()
         action_effective = not np.array_equal(previous_pos, self.player_position)
         info = {"action_is_effective": action_effective, "action_is_valid": True, "success": success}
