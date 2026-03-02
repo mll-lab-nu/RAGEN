@@ -31,27 +31,64 @@ class SokobanEnv(BaseDiscreteActionEnv, GymSokobanEnv):
         )
 
     def reset(self, seed=None, mode=None):
+        sol_range = self.config.min_solution_steps
+        min_sol = sol_range[0] if sol_range is not None else None
+        max_sol = sol_range[1] if sol_range is not None else None
+
+        for _ in range(self.config.max_reset_tries):
+            try:
+                with all_seed(seed):
+                    room_fixed, room_state, box_mapping, action_sequence = generate_room(
+                        dim=self.dim_room,
+                        num_steps=self.num_gen_steps,
+                        num_boxes=self.num_boxes,
+                        search_depth=self.search_depth
+                    )
+                sol_len = len(action_sequence)
+                if (min_sol is not None and sol_len < min_sol) or \
+                   (max_sol is not None and sol_len > max_sol):
+                    seed = abs(hash(str(seed))) % (2 ** 32) if seed is not None else None
+                    continue
+                self.room_fixed, self.room_state, self.box_mapping = room_fixed, room_state, box_mapping
+                self.num_env_steps, self.reward_last, self.boxes_on_target = 0, 0, 0
+                self.player_position = np.argwhere(self.room_state == 5)[0]
+                return self.render()
+            except (RuntimeError, RuntimeWarning):
+                seed = abs(hash(str(seed))) % (2 ** 32) if seed is not None else None
+
+        # Fallback: generate without difficulty constraint
         try:
             with all_seed(seed):
-                self.room_fixed, self.room_state, self.box_mapping, action_sequence = generate_room(
+                self.room_fixed, self.room_state, self.box_mapping, _ = generate_room(
                     dim=self.dim_room,
                     num_steps=self.num_gen_steps,
                     num_boxes=self.num_boxes,
                     search_depth=self.search_depth
                 )
-            self.num_env_steps, self.reward_last, self.boxes_on_target = 0, 0, 0
-            self.player_position = np.argwhere(self.room_state == 5)[0]
-            return self.render()
-        except (RuntimeError, RuntimeWarning) as e:
-            next_seed = abs(hash(str(seed))) % (2 ** 32) if seed is not None else None
-            return self.reset(next_seed)
+        except (RuntimeError, RuntimeWarning):
+            seed = abs(hash(str(seed))) % (2 ** 32) if seed is not None else None
+            with all_seed(seed):
+                self.room_fixed, self.room_state, self.box_mapping, _ = generate_room(
+                    dim=self.dim_room,
+                    num_steps=self.num_gen_steps,
+                    num_boxes=self.num_boxes,
+                    search_depth=self.search_depth
+                )
+        self.num_env_steps, self.reward_last, self.boxes_on_target = 0, 0, 0
+        self.player_position = np.argwhere(self.room_state == 5)[0]
+        return self.render()
         
     def step(self, action: int):
         previous_pos = self.player_position
-        _, reward, done, _ = GymSokobanEnv.step(self, action) 
+        _, gym_reward, done, _ = GymSokobanEnv.step(self, action)
+        success = self.boxes_on_target == self.num_boxes
+        if self.config.ignore_gym_reward:
+            reward = self.config.success_reward if success else 0.0
+        else:
+            reward = gym_reward
         next_obs = self.render()
         action_effective = not np.array_equal(previous_pos, self.player_position)
-        info = {"action_is_effective": action_effective, "action_is_valid": True, "success": self.boxes_on_target == self.num_boxes}
+        info = {"action_is_effective": action_effective, "action_is_valid": True, "success": success}
         return next_obs, reward, done, info
 
     def render(self, mode=None):

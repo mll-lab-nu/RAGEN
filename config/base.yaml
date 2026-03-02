@@ -108,7 +108,7 @@ trainer:
 agent_proxy:
   context_window_mode: "full" # "full" | "limited_multi_turn" | "single_turn"
   max_context_window: -1 # k value: -1 for full history, 1 for no history (like without_history)
-  enable_summary_memory: false # if true, summarize turns outside the context window instead of dropping them (only applies to single_turn mode)
+  enable_summary_memory: false # if true, summarize turns outside the context window instead of dropping them
   batch_adjust_mode: copy # "copy" to duplicate samples, "delete" to remove samples when batch size is not divisible
   max_turn: 5
   action_sep: "||"
