@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -e
 
-cd /workspace/RAGEN_temp
-export PYTHONPATH="$PWD:$PWD/verl"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
+cd "${REPO_ROOT}"
+export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/verl"
 
 python train.py --config-name _11_deepcoder \
     model_path="Qwen/Qwen2.5-3B-Instruct" \

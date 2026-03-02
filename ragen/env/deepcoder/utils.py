@@ -1,7 +1,9 @@
 import json
 import os
 import subprocess
+import sys
 import textwrap
+import tempfile
 from typing import Optional, Tuple
 
 from datasets import concatenate_datasets, load_dataset
@@ -162,8 +164,6 @@ def run_deepcoder_sandbox(
                     "",
                 ]
             )
-
-            print(harness)
             ok, out, err = _exec_python(harness, stdin_input="", timeout_seconds=timeout_seconds)
             if not ok:
                 return False, f"Runtime error on test {idx}: {err or out}"
@@ -190,14 +190,20 @@ def run_deepcoder_sandbox(
 
 
 def _exec_python(code: str, stdin_input: str, timeout_seconds: int = 5) -> Tuple[bool, str, str]:
-    debug_dir = "/tmp/deepcoder_debug"
-    os.makedirs(debug_dir, exist_ok=True)
-    script_path = f"{debug_dir}/solution.py"
-    with open(script_path, "w", encoding="utf-8") as f:
+    # Create a temporary Python file
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".py",
+        delete=False,
+        encoding="utf-8"
+    ) as f:
         f.write(code)
+        script_path = f.name
+
     try:
+        # Execute using the current Python interpreter
         proc = subprocess.run(
-            ["python", script_path],
+            [sys.executable, script_path],
             input=stdin_input,
             text=True,
             capture_output=True,
@@ -205,5 +211,13 @@ def _exec_python(code: str, stdin_input: str, timeout_seconds: int = 5) -> Tuple
         )
         ok = proc.returncode == 0
         return ok, proc.stdout, proc.stderr
+
     except subprocess.TimeoutExpired:
         return False, "", "Timeout"
+
+    finally:
+        # Always clean up the temporary file
+        try:
+            os.unlink(script_path)
+        except OSError:
+            pass

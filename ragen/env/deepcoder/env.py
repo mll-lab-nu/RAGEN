@@ -1,5 +1,6 @@
 import json
 import random
+from shlex import split
 from typing import Any, Dict, Optional, Tuple
 
 from datasets import load_dataset
@@ -35,8 +36,8 @@ class DeepCoderEnv(BaseLanguageBasedEnv):
         try:
             train_dataset, test_dataset = prepare_deepcoder_data()
             dataset_bundle = {"train": train_dataset, "test": test_dataset}
-        except Exception:
-            dataset_bundle = None
+        except Exception as exc:
+            raise RuntimeError("Failed to prepare DeepCoder dataset") from exc
 
         if dataset_bundle is not None:
             self.dataset = dataset_bundle
@@ -49,8 +50,11 @@ class DeepCoderEnv(BaseLanguageBasedEnv):
             solution = "def add(a, b):\n    return a + b"
             return prompt, solution
 
-        split = self.config.split or next(iter(self.dataset.keys()))
+        available_splits = list(self.dataset.keys())
+        split = self.config.split if self.config.split in self.dataset else available_splits[0]
         dataset_split = self.dataset[split]
+        if len(dataset_split) == 0:
+            raise ValueError(f"DeepCoder dataset split '{split}' is empty")
         index = random.randint(0, len(dataset_split) - 1)
         item = dataset_split[index]
         prompt = item.get("question", item.get("prompt", item.get("problem", str(item))))
