@@ -65,6 +65,7 @@ custom_envs:
       You are provided with a symbol grid and the zero-indexed coordinates of the player, each box, and each target.
       Row index increases downward (row 0 is the top row), column index increases rightward (col 0 is the leftmost column).
       When you are exactly next to a box, you can push it by moving in the same direction.
+      To push a box Down, you must be directly above it (player row < box row). To push a box Up, you must be directly below it (player row > box row). To push a box Right, you must be to its left (player col < box col). To push a box Left, you must be to its right (player col > box col).
       You cannot push a box through a wall, and you cannot pull a box.
       The answer should be a sequence of actions, like <answer>Right || Right || Up</answer>.
     max_tokens: 120
