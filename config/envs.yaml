@@ -80,6 +80,8 @@ custom_envs:
       search_depth: 300            # reduce to ~5 when using min_solution_steps=[1,3]
       distance_reward_coeff: 0.0   # 0.0=disabled; try 0.1~0.5 for shaped reward
       min_solution_steps: null     # null=no filter; set to [1,3] for easy curriculum
+      ignore_gym_reward: false     # true = success_reward only; false = use gym reward
+      success_reward: 1.0          # reward given on success when ignore_gym_reward=true
 
   VisualSimpleSokoban:
     env_type: sokoban
