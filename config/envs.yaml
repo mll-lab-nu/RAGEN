@@ -62,11 +62,15 @@ custom_envs:
     max_actions_per_traj: 10
     env_instruction: |
       You are solving the Sokoban puzzle. You are the player and you need to push all boxes to targets.
-      You are provided with a symbol grid and the zero-indexed coordinates of the player, each box, and each target. 
-      Coordinates range from the top-left corner (0, 0) to the bottom-right corner (5, 5). 
-      When you are exactly next to a box, you can push it by moving in the same direction. 
+      You are provided with a symbol grid and the zero-indexed coordinates of the player, each box, and each target.
+      Row index increases downward (row 0 is the top row), column index increases rightward (col 0 is the leftmost column).
+      When you are exactly next to a box, you can push it by moving in the same direction.
+      To push a box Down, you must be directly above it (player row < box row). To push a box Up, you must be directly below it (player row > box row). To push a box Right, you must be to its left (player col < box col). To push a box Left, you must be to its right (player col > box col).
       You cannot push a box through a wall, and you cannot pull a box.
       The answer should be a sequence of actions, like <answer>Right || Right || Up</answer>.
+      Before every action, read the current state carefully and begin your thinking with the exact coordinates:
+      Player: (row, col) | Box: (row, col) | Target: (row, col)
+      Then derive your move from these coordinates. Do not rely on memory of previous states.
     max_tokens: 120
     parallel_friendly: false
     max_workers: 32
@@ -76,6 +80,12 @@ custom_envs:
       num_boxes: 1
       max_steps: 100
       observation_format: "grid_coord"
+      search_depth: 300            # reduce to ~5 when using min_solution_steps=[1,3]
+      distance_reward_coeff: 0.0   # 0.0=disabled; try 0.1~0.5 for shaped reward
+      min_solution_steps: null     # null=no filter; set to [1,3] for easy curriculum
+      ignore_gym_reward: false     # true = success_reward only; false = use gym reward
+      success_reward: 1.0          # reward given on success when ignore_gym_reward=true
+      no_op_penalty: 0.0           # penalty per no-op action (player position unchanged)
 
   VisualSimpleSokoban:
     env_type: sokoban

@@ -232,11 +232,27 @@ class EnvStateManager:
             acc_reward, turn_info, turn_done, executed_actions = _execute_actions(env, valid_actions[:actions_left_before])
             no_manager_action = len(valid_actions) == 0
             penalty_delta = 0.0
-            if len(valid_actions) != len(env_input['actions']) or not valid_actions:
+            n_invalid = len(env_input['actions']) - len(valid_actions)
+            if n_invalid > 0:
+                # proportional penalty: each invalid action costs format_penalty
+                penalty_delta = self.sys_config.es_manager.format_penalty * n_invalid
+            elif not valid_actions:
                 penalty_delta = self.sys_config.es_manager.format_penalty
             if no_manager_action:
                 turn_info = dict(turn_info)
                 turn_info['manager_invalid_action'] = True
+
+            # step penalty: discourage using all turns without solving
+            step_penalty = float(getattr(self.sys_config.es_manager, 'step_penalty', 0.0))
+            if step_penalty > 0.0:
+                penalty_delta -= step_penalty * len(executed_actions)
+
+            # think quality penalty: penalize trivial/empty think blocks
+            think_quality_penalty = float(getattr(self.sys_config.es_manager, 'think_quality_penalty', 0.0))
+            if think_quality_penalty > 0.0:
+                think_len = env_input.get('think_len', -1)
+                if think_len >= 0 and think_len < 10:
+                    penalty_delta -= think_quality_penalty
 
             status, history = _log_env_state(entry['status'], self.rollout_cache[env_id]['history'], entry['env'].render(), entry['max_actions_per_traj'], executed_actions, valid_actions, acc_reward, turn_done, turn_info, env_input)
             if no_manager_action and history:
