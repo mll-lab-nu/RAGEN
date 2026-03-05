@@ -121,6 +121,8 @@ agent_proxy:
 
 es_manager:
   format_penalty: -0.5
+  step_penalty: 0.0
+  think_quality_penalty: 0.0
   train:
     env_groups: 8
     # under the same group, the env config and env seed are ensured to be equal
