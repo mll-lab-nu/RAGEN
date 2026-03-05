@@ -160,17 +160,18 @@ class ContextManager:
         if not match:
             # think_content, action_content, actions = "", "", [] # do not remove this kind of invalid string
             llm_response, actions = response, []
+            think_len = -1  # no valid format, don't penalize think separately
         else:
             if self.config.agent_proxy.enable_think:
                 think_content, action_content = match.group(1), match.group(2)
             else:
                 think_content, action_content = "", match.group(1)
 
-                
+
             for special_token in self.special_token_list:
                 action_content = action_content.replace(special_token, "").strip()
                 think_content = think_content.replace(special_token, "").strip()
-            
+
             actions = [action.strip() for action in action_content.split(self.action_sep) if action.strip()]
             max_actions = self.config.agent_proxy.max_actions_per_turn
 
@@ -179,7 +180,8 @@ class ContextManager:
                 action_content = (" " + self.action_sep + " ").join(actions)
 
             llm_response = f"<think>{think_content}</think><answer>{action_content}</answer>" if self.config.agent_proxy.enable_think else f"<answer>{action_content}</answer>"
-        return llm_response, actions
+            think_len = len(think_content)
+        return llm_response, actions, think_len
         
     def _normalize_score_tensor(self, score_tensor: torch.Tensor, env_outputs: List[Dict]) -> torch.Tensor:
         """
@@ -1245,7 +1247,7 @@ class ContextManager:
     def get_env_inputs(self, lm_outputs: DataProto) -> List[Dict]:
         if lm_outputs.batch is not None and 'responses' in lm_outputs.batch.keys():
             responses = self.tokenizer.batch_decode(
-                lm_outputs.batch['responses'], 
+                lm_outputs.batch['responses'],
                 skip_special_tokens=True
             )
         else: # dataproto has textual responses
@@ -1255,12 +1257,13 @@ class ContextManager:
         env_ids = lm_outputs.non_tensor_batch['env_ids']
         env_inputs = []
         for env_id, response in zip(env_ids, responses):
-            llm_response, actions = self._parse_response(response)
+            llm_response, actions, think_len = self._parse_response(response)
             env_inputs.append({
                 "env_id": env_id,
                 "llm_raw_response": response,
                 "llm_response": llm_response,
                 "actions": actions,
+                "think_len": think_len,
             })
         return env_inputs
 

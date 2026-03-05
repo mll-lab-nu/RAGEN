@@ -234,6 +234,18 @@ class EnvStateManager:
                 turn_info = dict(turn_info)
                 turn_info['manager_invalid_action'] = True
 
+            # step penalty: discourage using all turns without solving
+            step_penalty = float(getattr(self.sys_config.es_manager, 'step_penalty', 0.0))
+            if step_penalty > 0.0:
+                penalty_delta -= step_penalty * len(executed_actions)
+
+            # think quality penalty: penalize trivial/empty think blocks
+            think_quality_penalty = float(getattr(self.sys_config.es_manager, 'think_quality_penalty', 0.0))
+            if think_quality_penalty > 0.0:
+                think_len = env_input.get('think_len', -1)
+                if think_len >= 0 and think_len < 10:
+                    penalty_delta -= think_quality_penalty
+
             status, history = _log_env_state(entry['status'], self.rollout_cache[env_id]['history'], entry['env'].render(), entry['max_actions_per_traj'], executed_actions, valid_actions, acc_reward, turn_done, turn_info, env_input)
             if no_manager_action and history:
                 history[-1]['manager_invalid_action'] = True
