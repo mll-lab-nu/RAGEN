@@ -1,0 +1,38 @@
+defaults:
+  - base
+
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+# NOTE: Before training, start the retrieval server:
+#   bash scripts/retrieval/launch_server.sh ./search_data/prebuilt_indices 8000
+
+micro_batch_size_per_gpu: 4
+ppo_mini_batch_size: 32
+model_path: Qwen/Qwen2.5-3B-Instruct
+
+trainer:
+  experiment_name: search-qa
+
+agent_proxy:
+  max_turn: 5              # allow up to 5 search rounds before final answer
+  max_actions_per_turn: 1  # one action per LLM response (search or finish)
+
+actor_rollout_ref:
+  rollout:
+    max_model_len: 5000
+    max_num_batched_tokens: 5000
+
+es_manager:
+  train:
+    env_groups: 16
+    group_size: 8
+    env_configs:
+      tags: ["SearchQA"]
+      n_groups: [16]
+  val:
+    env_groups: 256
+    env_configs:
+      tags: ["SearchQA"]
+      n_groups: [256]

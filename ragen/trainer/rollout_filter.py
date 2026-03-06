@@ -84,8 +84,13 @@ class RolloutFilter:
             else:
                 raise ValueError(f"Invalid rollout filter type: {self.filter_type}")
 
-            # 2. Compute probabilities
-            probs = torch.softmax(logits, dim=0)
+            # 2. Compute probabilities (linear normalization)
+            shifted = logits - logits.min()
+            total = shifted.sum()
+            if total > 1e-10:
+                probs = shifted / total
+            else:
+                probs = torch.ones_like(logits) / logits.numel()
 
             # 3. Sort probabilities in descending order
             sorted_probs, sorted_indices = torch.sort(probs, descending=True)

@@ -292,11 +292,46 @@ custom_envs:
       show_conflicts: true
       show_valid_numbers: true
       max_steps: 81
-      
-  DeepCoder:
-    env_type: deepcoder
-    max_actions_per_traj: 1
-    env_instruction: "You are solving a coding task. Provide a complete Python function solution only. Format: <answer>...</answer>"
-    max_tokens: 400
+
+  # --- Search QA (HotpotQA) ---
+  # Requires: retrieval server running (see scripts/retrieval/launch_server.sh)
+  SearchQA:
+    env_type: search
+    max_actions_per_traj: 10
+    env_instruction: |
+      You are a search agent answering questions by searching for information.
+      Use search[your query] to find relevant documents, and finish[your answer] to submit your final answer.
+
+      You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <think> </think> tags.
+      Then provide your action within <answer>...</answer> tags.
+
+      Examples:
+        <think>I need to find information about Ben Platt's father.</think><answer>search[Ben Platt father parent]</answer>
+        <think>Based on the search results, Ben Platt's father is Henry Platt.</think><answer>finish[Henry Platt]</answer>
+    max_tokens: 300
+    parallel_friendly: true
+    max_workers: 32
     env_config:
-      max_steps: 1
+      max_steps: 10
+      max_search_results: 5
+
+  SearchQAMock:
+    env_type: search
+    max_actions_per_traj: 10
+    env_instruction: |
+      You are a search agent answering questions by searching for information.
+      Use search[your query] to find relevant documents, and finish[your answer] to submit your final answer.
+
+      You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <think> </think> tags.
+      Then provide your action within <answer>...</answer> tags.
+
+      Examples:
+        <think>I need to find information about Ben Platt's father.</think><answer>search[Ben Platt father parent]</answer>
+        <think>Based on the search results, Ben Platt's father is Henry Platt.</think><answer>finish[Henry Platt]</answer>
+    max_tokens: 300
+    parallel_friendly: true
+    max_workers: 32
+    env_config:
+      max_steps: 10
+      max_search_results: 5
+      mock_mode: true

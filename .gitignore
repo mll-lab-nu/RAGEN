@@ -119,3 +119,6 @@ tests/e2e/toy_examples/deepspeed/synchronous/output.txt
 
 log/
 *.result
+
+# Search data (large files)
+search_data/

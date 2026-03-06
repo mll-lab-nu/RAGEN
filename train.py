@@ -11,7 +11,6 @@ import os
 from verl import DataProto
 import torch
 import numpy as np
-from omegaconf import OmegaConf
 from ragen.utils import register_resolvers
 register_resolvers()
 import sys
@@ -183,23 +182,22 @@ def run_ppo(config) -> None:
     print(f"CUDA_VISIBLE_DEVICES: {os.environ['CUDA_VISIBLE_DEVICES']}")
     os.environ["ENSURE_CUDA_VISIBLE_DEVICES"] = os.environ.get('CUDA_VISIBLE_DEVICES', '')
     if not ray.is_initialized():
-        # Respect optional ray init config (e.g., num_cpus) and merge required env vars.
-        ray_init_cfg = config.get("ray_kwargs", {}).get("ray_init", {})
-        ray_init_kwargs = OmegaConf.to_container(ray_init_cfg, resolve=True) if ray_init_cfg is not None else {}
-        if ray_init_kwargs is None:
-            ray_init_kwargs = {}
-
-        runtime_env = ray_init_kwargs.get("runtime_env", {}) or {}
-        runtime_env_env_vars = runtime_env.get("env_vars", {}) or {}
-        runtime_env["env_vars"] = {
-            'TOKENIZERS_PARALLELISM': 'true',
-            'NCCL_DEBUG': 'WARN',
-            'VLLM_LOGGING_LEVEL': 'WARN',
-            "RAY_DEBUG": "legacy",  # used here for simpler breakpoint()
-            **runtime_env_env_vars,
+        # this is for local ray cluster
+        ray_init_kwargs = {
+            'runtime_env': {
+                'env_vars': {
+                    'TOKENIZERS_PARALLELISM': 'true',
+                    'NCCL_DEBUG': 'WARN',
+                    'VLLM_LOGGING_LEVEL': 'WARN',
+                    "RAY_DEBUG": "legacy" # used here for simpler breakpoint()
+                }
+            }
         }
-        ray_init_kwargs["runtime_env"] = runtime_env
-        print(f"ray init kwargs: {ray_init_kwargs}")
+        # Pass num_cpus from config to avoid spawning hundreds of idle workers
+        ray_cfg = config.get("ray_kwargs", {})
+        ray_init_cfg = ray_cfg.get("ray_init", {}) if ray_cfg else {}
+        if ray_init_cfg and ray_init_cfg.get("num_cpus") is not None:
+            ray_init_kwargs["num_cpus"] = ray_init_cfg["num_cpus"]
         ray.init(**ray_init_kwargs)
 
     runner = TaskRunner.remote()
