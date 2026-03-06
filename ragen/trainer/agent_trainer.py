@@ -667,6 +667,23 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                     with marked_timer("filter", timing_raw):
                         # Filter first, then adjust batch size
                         batch, filter_metrics = self.rollout_filter.filter(batch)
+
+                        # Convert raw reward matrix to a wandb table if present
+                        reward_matrix = filter_metrics.pop("rollout/_reward_matrix", None)
+                        if reward_matrix is not None:
+                            try:
+                                import wandb
+                                num_groups, group_size = reward_matrix.shape
+                                columns = [f"group_{i}" for i in range(num_groups)]
+                                table_data = []
+                                for s in range(group_size):
+                                    table_data.append([reward_matrix[g, s].item() for g in range(num_groups)])
+                                filter_metrics["rollout/reward_table"] = wandb.Table(
+                                    columns=columns, data=table_data
+                                )
+                            except ImportError:
+                                pass
+
                         metrics.update(filter_metrics)
                         
                         # Add kept ratio to meta_info for loss scaling

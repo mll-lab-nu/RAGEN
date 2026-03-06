@@ -396,6 +396,9 @@ class RewardRolloutFilter(RolloutFilter):
             }
         )
 
+        # Store the raw reward matrix for wandb table logging (num_groups x group_size)
+        metrics["rollout/_reward_matrix"] = rm_scores.detach().cpu()
+
         if self.strategy == "top_p" and self.config.value >= 1 and self.config.include_zero:
             return batch, metrics
 
