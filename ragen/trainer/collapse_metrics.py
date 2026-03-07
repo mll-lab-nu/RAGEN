@@ -2,8 +2,8 @@
 Collapse detection metrics for RL training.
 
 Distinguishes two collapse phenomena:
-- Entropy Collapse: Model becomes more deterministic per input (low H(R|X))
-- Template Collapse: Reasoning becomes input-independent (low I(X;R))
+- Entropy Collapse: Model becomes more deterministic per input (low H(Z|X))
+- Template Collapse: Reasoning becomes input-independent (low I(X;Z))
 
 Key insight: We compute MI under the batch's empirical input distribution (uniform over prompts),
 not the true p(x). This is exactly what's needed for diagnosing template collapse.
@@ -26,7 +26,7 @@ class CollapseDetector:
     Detects template collapse and entropy collapse in RL training.
 
     Key metrics:
-    - MI Estimate: Î(X;R) - High = healthy, Low = template collapse
+    - MI Estimate: Î(X;Z) - High = healthy, Low = template collapse
     - Retrieval Accuracy: Acc - High = healthy, ~1/N = template collapse
     """
 
@@ -50,7 +50,7 @@ class CollapseDetector:
             context_window_mode: Context window mode ("full", "single_turn", "limited_multi_turn")
             multi_turn_enabled: Whether to use multi-turn sampling for MI computation
             first_turn_enabled: Whether to compute first-turn metrics
-            num_samples: Number of (x,r) pairs to sample (None = use all)
+            num_samples: Number of (x,z) pairs to sample (None = use all)
             std_eps: Small constant for std normalization stability
             ema_decay: EMA decay for cross-time std tracking
         """
@@ -459,12 +459,12 @@ class CollapseDetector:
         reasoning_mask: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Compute cross log probabilities: ℓ_j(r_{i,k}) for all (i,k,j) pairs.
+        Compute cross log probabilities: ℓ_j(z_{i,k}) for all (i,k,j) pairs.
 
-        For each reasoning r_{i,k} and each prompt x_j:
-        1. Construct sequence [x_j | r_{i,k}]
+        For each reasoning z_{i,k} and each prompt x_j:
+        1. Construct sequence [x_j | z_{i,k}]
         2. Compute teacher-forcing log prob
-        3. Sum over reasoning tokens → ℓ_j(r_{i,k})
+        3. Sum over reasoning tokens → ℓ_j(z_{i,k})
 
         Returns:
             cross_log_probs: (NK, N) per-token mean log prob tensor
@@ -485,7 +485,7 @@ class CollapseDetector:
             prompt = prompts[gid].to(device)  # (prompt_len,)
             prompt_len = prompt.shape[0]
 
-            # Create cross batch: [x_j | r_{i,k}] for all reasoning sequences
+            # Create cross batch: [x_j | z_{i,k}] for all reasoning sequences
             cross_input_ids_list = []
             cross_attention_mask_list = []
             cross_position_ids_list = []
@@ -569,11 +569,11 @@ class CollapseDetector:
         """
         Compute mutual information estimate.
 
-        Î(X;R) = E[log p(r|x) - log p_mix(r)]
+        Î(X;Z) = E[log p(z|x) - log p_mix(z)]
 
         Args:
-            matched: log p(r|x) for matched prompt
-            marginal: log p_mix(r) under uniform prompt mixture
+            matched: log p(z|x) for matched prompt
+            marginal: log p_mix(z) under uniform prompt mixture
             N_prompts: Number of unique prompts
         Returns:
             Dictionary of MI-related metrics
@@ -599,7 +599,7 @@ class CollapseDetector:
         """
         Compute retrieval accuracy.
 
-        Acc = fraction where argmax_j ℓ_j(r) matches the true prompt.
+        Acc = fraction where argmax_j ℓ_j(z) matches the true prompt.
         If col_signatures are provided, columns with identical prompts are treated as correct.
 
         Args:
@@ -680,8 +680,8 @@ class CollapseDetector:
         marginal_sum: torch.Tensor,
     ) -> Dict[str, float]:
         """
-        Estimate H(R|X) using the matched log-probabilities of the sampled reasoning.
-        And Estimate reasoning entropy H(R) = H(R|X) + I(X;R).
+        Estimate H(Z|X) using the matched log-probabilities of the sampled reasoning.
+        And estimate reasoning entropy H(Z) = H(Z|X) + I(X;Z).
         Per-token estimates are length-normalized; *_seq_est uses summed log probs.
         """
         matched_mean = matched.mean().item()
@@ -706,7 +706,7 @@ class CollapseDetector:
         group_ids: np.ndarray,
     ) -> Tuple[List, List, np.ndarray]:
         """
-        Sample (x, r) pairs from first-turn data with uniform sampling.
+        Sample (x, z) pairs from first-turn data with uniform sampling.
         """
         if isinstance(first_turn_prompt_ids, np.ndarray):
             first_turn_prompt_ids = list(first_turn_prompt_ids)
