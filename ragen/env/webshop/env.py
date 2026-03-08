@@ -1,18 +1,25 @@
 from ragen.env.base import BaseLanguageBasedEnv
 from ragen.env.webshop.config import WebShopEnvConfig
 from webshop_minimal import WebAgentTextEnv, init_basedir
-from webshop_minimal.env import SimServer
-from webshop_minimal.utils import get_file_path
 from typing import Optional, Union
 from ragen.utils import all_seed
 import random
 import string
 import uuid
-import numpy as np
 
 
-# RENDER_INSTRUCTIONS moved to config or removed for alignment with verl-agent
-RENDER_INSTRUCTIONS = [] 
+# Define global constant for render instructions
+RENDER_INSTRUCTIONS = [
+    "We must buy a product within 10 actions. It doesn't have to match perfectly with description.",
+    "Search term should not include details like size, color.",
+    "Never search for more than 2 times.",
+    "Do not be too strict about the description, it's more important to buy one that is close enough within action limit.",
+    "Prioritize click a product in the current page over going to next page.",
+    "Almost never click[next >] for more than 2 times."
+    "Almost never click[< prev] unless you are sure the product is on one of the previous pages.",
+    "If you have less than 3 actions left, just buy the first product you see in the current page.",
+    "If an matching option exists, make sure to click[size] then click[color], one at a time, before click[buy now], but don't have to if only 1 action left, in that case you just click[buy now]. Never click description."
+]
 
 
 class WebShopEnv(BaseLanguageBasedEnv, WebAgentTextEnv):
@@ -30,31 +37,15 @@ class WebShopEnv(BaseLanguageBasedEnv, WebAgentTextEnv):
         self.human_goals = self.config.human_goals
         self.show_attrs = self.config.show_attrs
         self.render_cache = None
-        self.task_desc = None # Cache task description to avoid AttributeError during step
         if self.config.dataset:
             init_basedir(self.config.dataset)
 
         BaseLanguageBasedEnv.__init__(self)
-
-        self._seed = 0 # Match verl-agent env.seed=0
-        random.seed(self._seed)
-        np.random.seed(self._seed)
-        
-        self.server = SimServer(
-            base_url='http://127.0.0.1:3000',
-            file_path=get_file_path(),
-            filter_goals=self.config.filter_goals,
-            limit_goals=self.config.limit_goals,
-            num_products=self.config.num_products,
-            human_goals=self.config.human_goals,
-            show_attrs=self.config.show_attrs,
-        ) if self.config.server is None else self.config.server
-
         WebAgentTextEnv.__init__(
             self,
             observation_mode=self.observation_mode,
             file_path=self.file_path,
-            server=self.server, # Pass the initialized server
+            server=self.server,
             filter_goals=self.filter_goals,
             limit_goals=self.limit_goals,
             num_products=self.num_products,
@@ -93,81 +84,52 @@ class WebShopEnv(BaseLanguageBasedEnv, WebAgentTextEnv):
         permutation = getattr(self, cache_key)
         return permutation[idx]
 
-    def reset(self, seed: int = None, mode: str = "train", session: Optional[Union[str, int]] = None, **kwargs) -> str:
+    def reset(self, seed=None, mode="train", session: Optional[Union[str, int]] = None, instruction_text: Optional[str] = None) -> any:
         """
-        Reset the environment and return the full rendered prompt.
-        """
-        # use seed if provided, else use self._seed
-        seed = seed if seed is not None else self._seed
-        random.seed(seed)
-        np.random.seed(seed)
+        Reset the environment and return the initial observation.
 
-        if session is not None:
-            goal_idx = session
-        else:
-            # Handle RAGEN's train/val/test splits
-            if mode in ["test", "val"]:
-                goal_idx = seed % 500
-            elif mode == "train":
-                goal_idx = seed % (len(self.server.goals) - 500) + 500
-            else:
-                goal_idx = seed
-            
-            # optional permutation
-            goal_idx = self._get_permuted_index(goal_idx)
-            
-        # Call base reset. It returns (obs, info) from our modified webshop-minimal
-        obs, _ = WebAgentTextEnv.reset(self, session=goal_idx)
-        
-        # Extract and cache task description exactly like verl-agent
-        parts = obs.split(" [SEP] ")
-        if len(parts) > 2 and parts[1].strip() == 'Instruction:':
-            self.task_desc = parts[2].strip()
-        else:
-            try:
-                self.task_desc = self.get_instruction_text().replace("Instruction:", "").strip()
-            except Exception:
-                # Fallback if parsing fails
-                self.task_desc = "Find products as requested."
+        Args:
+            session (str|int|None): The new session ID.
+            instruction_text (str|None): Optional new instruction text.
 
-        self.prepare_render_cache(obs)
-        return self.render()
+        Returns:
+            The initial observation.
+        """
+        if seed is None:
+            # This is from within webshop_minimal. Need to reset with seed later.
+            return None
+        if mode == "test":
+            goal_idx = seed % 500
+        elif mode == "val":
+            goal_idx = seed % 1000 + 500
+        elif mode == "train":
+            goal_idx = seed % (len(self.server.goals) - 1500) + 1500
+        session = self._get_permuted_index(goal_idx) if session is None else session
+        obs, _ = WebAgentTextEnv.reset(self, session=session, instruction_text=instruction_text)
+        self.prepare_render_cache(WebAgentTextEnv.get_instruction_text(self))
+        return obs
 
-    def step(self, action: str):
+    def step(self, action):
         """
-        Execute one step and return (rendered_prompt, reward, done, info).
+        Take an action in the environment and return the next observation, reward, done, and info.
         """
+        action_is_valid = action in self.get_available_actions() or ("search[<content>]" in self.get_available_actions() and action.startswith('search[') and action.endswith(']'))
         last_observation = self.observation
-        
-        # Call base step
-        obs, raw_reward, done, info = WebAgentTextEnv.step(self, action)
-        
-        # Identify if action worked
-        action_is_valid = True # WebAgentTextEnv handles invalid actions by doing nothing
-        
-        # Align reward function (binarized {0, 10})
-        # info['won'] is True if reward == 1.0 (success)
-        if done and raw_reward == 1.0:
-            reward = 10.0
-            won = True
-        else:
-            reward = 0.0
-            won = False
+        state, reward, done, info = WebAgentTextEnv.step(self, action)
+        self.prepare_render_cache(self.observation)
             
         info = (info or {}).copy()
         info.update({
             "reward": reward,
-            "raw_reward": raw_reward,
+            "raw_reward": reward,
             "action_is_effective": self.observation != last_observation,
             "action_is_valid": action_is_valid,
-            "success": 1 if won else 0,
-            "won": won,
+            "success": 1 if reward == 1 else 0,
             "success_purchase": 1 if done else 0,
-            "success_find": 1 if won else 0,
+            "success_find": 1 if reward == 1 else 0,
+            "end_of_page": 1 if tuple(self.get_available_actions()) == ('click[back to search]', 'click[< prev]') else 0,
         })
-        
-        self.prepare_render_cache(obs)
-        return self.render(), reward, done, info
+        return self.observation, reward, done, info
 
     def render(self, mode=None):
         """
@@ -181,63 +143,25 @@ class WebShopEnv(BaseLanguageBasedEnv, WebAgentTextEnv):
         """
         WebAgentTextEnv.close(self)
 
-    def format_obs(self, text_obs: str) -> str:
-        """
-        Align with verl-agent's format_obs logic in WebshopEnvironmentManager.
-        Strips before task and quotes segments.
-        """
-        parts = text_obs.split(" [SEP] ")
-        # In WebShop, parts[1] is 'Instruction:', parts[2] is the actual task
-        try:
-            task = parts[2]
-            index = 2
-            reformatted_obs = " [SEP] ".join(f"'{p.strip()}'" for p in parts[index+1:])
-        except:
-            reformatted_obs = text_obs
-        return reformatted_obs
-
     def prepare_render_cache(self, observation: str):
         """
-        Prepare the render cache for the environment to match verl-agent's structure.
+        Prepare the render cache for the environment.
         """
         available_actions = self.get_available_actions()
+        self.render_cache = observation + "."
+        self.render_cache += "\n".join(RENDER_INSTRUCTIONS)
+        self.render_cache += "\n You must choose from these actions:" + ", ".join(available_actions) + "."
         
-        # Use cached task description
-        if self.task_desc is None:
-            parts = observation.split(" [SEP] ")
-            if len(parts) > 2 and parts[1].strip() == 'Instruction:':
-                self.task_desc = parts[2].strip()
-            else:
-                try:
-                    self.task_desc = self.get_instruction_text().replace("Instruction:", "").strip()
-                except Exception:
-                    self.task_desc = "Find products as requested."
-        
-        task_desc = self.task_desc
-        formatted_obs = self.format_obs(observation)
-        
-        # Quote actions and add trailing commas to match verl-agent's EnvManager
-        reformatted_available_actions = "\n".join(f"'{s}'," for s in available_actions)
-        
-        # Match WEBSHOP_TEMPLATE_NO_HIS exactly
-        render = f"Your task is to: {task_desc}.\n"
-        render += f"Your current observation is: {formatted_obs}.\n"
-        render += "Your admissible actions of the current situation are: \n[\n"
-        render += reformatted_available_actions
-        render += "\n]."
-        self.render_cache = render
 
     def get_available_actions(self):
         """
         Parse the available actions in the environment to a list of strings.
-        Matches verl-agent's format_avail_actions logic.
         """
         orig_available_actions = WebAgentTextEnv.get_available_actions(self)
         available_actions = []
 
         if orig_available_actions['has_search_bar']:
-            # verl-agent uses <your query>
-            available_actions.append('search[<your query>]')
+            available_actions.append('search[<content>]')
 
         for clickable in orig_available_actions['clickables']:
             if clickable != 'search':
@@ -249,26 +173,15 @@ class WebShopEnv(BaseLanguageBasedEnv, WebAgentTextEnv):
         return available_actions
 
 if __name__ == '__main__':
-    from ragen.env.webshop.config import WebShopEnvConfig
-    config = WebShopEnvConfig()
-    env = WebShopEnv(config)
-    obs = env.reset(seed=1500, mode="train")
-    print(f"Initial Observation:\n{obs}")
-    print(f"Render output:\n{env.render()}")
-    
+    env = WebShopEnv()
+    print(env.reset())
     while True:
-        # print(env.observation)
-        # print(env.server.user_sessions[env.session]['goal']['asin'])
-        available_actions = env.get_available_actions()
-        print(f"Available actions: {available_actions}")
+        print(env.observation)
+        print(env.server.user_sessions[env.session]['goal']['asin'])
+        print(f"Available actions: {env.get_available_actions()}")
         action = input("Enter action: ")
         if action == 'q':
             break
         obs, reward, done, info = env.step(action)
-        print(f"Observation: {obs}")
-        print(f"Reward: {reward}")
-        print(f"Info: {info}")
-        if done:
-            print("Episode ended.")
-            break
+        print(obs, reward, done, info)
     env.close()

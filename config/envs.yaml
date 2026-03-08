@@ -194,8 +194,9 @@ custom_envs:
 
   WebShop:
     env_type: webshop
-    max_actions_per_traj: 15
-    env_instruction: "You are an expert autonomous agent operating in the WebShop e‑commerce environment."
+    max_actions_per_traj: 9
+    # env_instruction: "You are browsing an online shop. Based on the instruction, find the product that close to the production description. You need to read the website and decide what action to take next until buying a product. Available actions depends on the page: in the search page you can search keywords, in the search result page you can click an item url or click[next >] to navigate to next page, in the product page you can click[description] or click[features] to see the details, click[blue] or click[x-large] to choose size and colors, click[buy now] when you decided to buy the product, click[back to search] to return to search page. You should only choose action from the available actions list.  Example process: I need a gingko light and 20x20 pillow cover that is hand painted. First search[gingko light 20x20 pillow cover hand painted], answer format: <answer>search[blanket with fleece throw]</answer>. Valid answer is search[<keywords>] or click[<clickable>]."
+    env_instruction: "You are browsing an online shop. Based on the instruction, buy a product that close to the production description. You need to search, read the search results, pick a product, choose the size and color and buy. You should only choose action from the available actions list provided later.  Example process: I need a gingko light and 20x20 pillow cover that is hand painted. First search[gingko light 20x20 pillow cover hand painted], answer format: <answer>search[blanket with fleece throw]</answer>. Valid answer is search[<keywords>] or click[<clickable>]."
     # env_instruction: >
     #   You are browsing an online shop. Based on the instruction, find a product
     #   that closely matches the production description. You need to iteratively take

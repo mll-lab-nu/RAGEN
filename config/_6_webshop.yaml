@@ -19,8 +19,8 @@ agent_proxy:
 
 actor_rollout_ref:
   rollout:
-    max_model_len: 14000
-    max_num_batched_tokens: 14000
+    max_model_len: 15000
+    max_num_batched_tokens: 15000
 
 es_manager:
   train:
