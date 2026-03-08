@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import tempfile
 import textwrap
 from typing import Optional, Tuple
 
@@ -98,10 +99,10 @@ def run_deepcoder_sandbox(
     tests: list,
     metadata: Optional[dict] = None,
     starter_code: str = "",
-    timeout_seconds: int = 5,
-) -> Tuple[bool, str]:
+    timeout_seconds: int = 3,
+) -> Tuple[bool, str, int, int, bool]:
     if not tests:
-        return False, "No tests available."
+        return False, "No tests available.", 0, 0, False
 
     func_name = None
     if metadata:
@@ -128,7 +129,8 @@ def run_deepcoder_sandbox(
     else:
         user_code = header or body
 
-    for idx, test in enumerate(tests):
+    prepared_tests = []
+    for test in tests:
         testtype = test.get("testtype")
         expected = test.get("output")
         if testtype == "functional" and func_name:
@@ -143,57 +145,173 @@ def run_deepcoder_sandbox(
                 args = list(raw_input)
             else:
                 args = [raw_input]
-            call_target = func_name
-            if "class Solution" in user_code:
-                call_target = f"Solution().{func_name}"
-            harness = "\n".join(
-                [
-                    user_code,
-                    "",
-                    "import json",
-                    "def _run():",
-                    f"    try:",
-                    f"        result = {call_target}(*{args})",
-                    "        print(json.dumps({\"ok\": True, \"result\": result}, ensure_ascii=False))",
-                    "    except Exception as e:",
-                    "        print(json.dumps({\"ok\": False, \"error\": repr(e)}))",
-                    "if __name__ == \"__main__\":",
-                    "    _run()",
-                    "",
-                ]
+            prepared_tests.append(
+                {
+                    "testtype": "functional",
+                    "args": args,
+                    "expected": expected,
+                }
+            )
+        else:
+            prepared_tests.append(
+                {
+                    "testtype": "stdin_stdout",
+                    "input": test.get("input", ""),
+                    "expected": expected,
+                }
             )
 
-            print(harness)
-            ok, out, err = _exec_python(harness, stdin_input="", timeout_seconds=timeout_seconds)
+    # Run all tests in a single Python child process to avoid process spawn overhead per test.
+    harness = f"""
+import io
+import json
+import sys
+from contextlib import redirect_stdout, redirect_stderr
+
+USER_CODE = json.loads({json.dumps(json.dumps(user_code, ensure_ascii=False), ensure_ascii=False)})
+TESTS = json.loads({json.dumps(json.dumps(prepared_tests, ensure_ascii=False), ensure_ascii=False)})
+FUNC_NAME = json.loads({json.dumps(json.dumps(func_name, ensure_ascii=False), ensure_ascii=False)})
+
+def _run_functional(test):
+    scope = {{}}
+    with io.StringIO() as _buf_out, io.StringIO() as _buf_err:
+        with redirect_stdout(_buf_out), redirect_stderr(_buf_err):
+            exec(USER_CODE, scope, scope)
+    call_target = None
+    if "Solution" in scope and FUNC_NAME:
+        call_target = getattr(scope["Solution"](), FUNC_NAME)
+    elif FUNC_NAME and FUNC_NAME in scope:
+        call_target = scope[FUNC_NAME]
+    else:
+        return False, None, "Function not found"
+    try:
+        result = call_target(*test.get("args", []))
+        return True, result, None
+    except Exception as e:
+        return False, None, repr(e)
+
+def _run_stdin_stdout(test):
+    scope = {{"__name__": "__main__"}}
+    stdin_data = str(test.get("input", ""))
+    out_buf = io.StringIO()
+    err_buf = io.StringIO()
+    try:
+        old_stdin = sys.stdin
+        sys.stdin = io.StringIO(stdin_data)
+        with redirect_stdout(out_buf), redirect_stderr(err_buf):
+            exec(USER_CODE, scope, scope)
+        return True, out_buf.getvalue(), None
+    except Exception as e:
+        return False, out_buf.getvalue(), repr(e)
+    finally:
+        sys.stdin = old_stdin
+
+def main():
+    passed_tests = 0
+    total_tests = len(TESTS)
+    runnable = True
+    first_failure = None
+    events = []
+
+    for idx, test in enumerate(TESTS):
+        testtype = test.get("testtype")
+        expected = test.get("expected")
+        if testtype == "functional":
+            ok, result, err = _run_functional(test)
             if not ok:
-                return False, f"Runtime error on test {idx}: {err or out}"
-            try:
-                payload = json.loads(out.strip().splitlines()[-1])
-            except Exception:
-                return False, f"Malformed output on test {idx}: {out.strip()}"
-            if not payload.get("ok", False):
-                return False, f"Exception on test {idx}: {payload.get('error')}"
-            if str(payload.get("result")) != str(expected):
-                return False, f"Wrong answer on test {idx}: got {payload.get('result')} expected {expected}"
+                runnable = False
+                events.append({{"idx": idx, "ok": False}})
+                if first_failure is None:
+                    first_failure = f"Exception on test {{idx}}: {{err}}"
+                continue
+            if str(result) != str(expected):
+                events.append({{"idx": idx, "ok": False}})
+                if first_failure is None:
+                    first_failure = f"Wrong answer on test {{idx}}: got {{result}} expected {{expected}}"
+                continue
+            passed_tests += 1
+            events.append({{"idx": idx, "ok": True}})
         else:
-            stdin_input = test.get("input", "")
-            harness = user_code + "\n"
-            ok, out, err = _exec_python(harness, stdin_input=stdin_input, timeout_seconds=timeout_seconds)
+            ok, out, err = _run_stdin_stdout(test)
             if not ok:
-                return False, f"Runtime error on test {idx}: {err or out}"
-            got = out.strip()
+                runnable = False
+                events.append({{"idx": idx, "ok": False}})
+                if first_failure is None:
+                    first_failure = f"Runtime error on test {{idx}}: {{err}}"
+                continue
+            got = str(out).strip()
             exp = str(expected).strip()
-            if str(got) != str(exp):
-                return False, f"Wrong answer on test {idx}: got {got} expected {exp}"
+            if got != exp:
+                events.append({{"idx": idx, "ok": False}})
+                if first_failure is None:
+                    first_failure = f"Wrong answer on test {{idx}}: got {{got}} expected {{exp}}"
+                continue
+            passed_tests += 1
+            events.append({{"idx": idx, "ok": True}})
 
-    return True, "All tests passed."
+    is_correct = (passed_tests == total_tests and total_tests > 0)
+    if is_correct:
+        detail = "All tests passed."
+    else:
+        summary = f"Passed {{passed_tests}}/{{total_tests}} tests."
+        detail = summary if first_failure is None else f"{{summary}} {{first_failure}}"
+
+    print(
+        json.dumps(
+            {{
+                "is_correct": is_correct,
+                "detail": detail,
+                "passed_tests": passed_tests,
+                "total_tests": total_tests,
+                "runnable": runnable,
+                "events": events,
+            }},
+            ensure_ascii=False,
+        )
+    )
+
+if __name__ == "__main__":
+    main()
+"""
+
+    ok, out, err = _exec_python(textwrap.dedent(harness), stdin_input="", timeout_seconds=timeout_seconds)
+    if not ok:
+        detail = f"Sandbox runtime error: {err or out}"
+        return False, detail, 0, len(prepared_tests), False
+
+    try:
+        payload = json.loads(out.strip().splitlines()[-1])
+    except Exception:
+        detail = f"Sandbox malformed output: {out.strip()}"
+        return False, detail, 0, len(prepared_tests), False
+
+    if not isinstance(payload, dict):
+        detail = f"Sandbox malformed payload type: {type(payload).__name__}"
+        return False, detail, 0, len(prepared_tests), False
+
+    events = payload.get("events", [])
+    if isinstance(events, list):
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            idx = event.get("idx", "?")
+            ok = bool(event.get("ok", False))
+            print(f"[DeepCoderSandbox] test={idx} ok={ok}")
+
+    return (
+        bool(payload.get("is_correct", False)),
+        str(payload.get("detail", "Unknown")),
+        int(payload.get("passed_tests", 0)),
+        int(payload.get("total_tests", len(prepared_tests))),
+        bool(payload.get("runnable", False)),
+    )
 
 
-def _exec_python(code: str, stdin_input: str, timeout_seconds: int = 5) -> Tuple[bool, str, str]:
+def _exec_python(code: str, stdin_input: str, timeout_seconds: int = 3) -> Tuple[bool, str, str]:
     debug_dir = "/tmp/deepcoder_debug"
     os.makedirs(debug_dir, exist_ok=True)
-    script_path = f"{debug_dir}/solution.py"
-    with open(script_path, "w", encoding="utf-8") as f:
+    fd, script_path = tempfile.mkstemp(prefix="solution_", suffix=".py", dir=debug_dir)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(code)
     try:
         proc = subprocess.run(
@@ -207,3 +325,8 @@ def _exec_python(code: str, stdin_input: str, timeout_seconds: int = 5) -> Tuple
         return ok, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired:
         return False, "", "Timeout"
+    finally:
+        try:
+            os.remove(script_path)
+        except OSError:
+            pass

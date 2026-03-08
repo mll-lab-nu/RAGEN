@@ -152,6 +152,16 @@ custom_envs:
     env_config: 
       split: "test"
 
+  DeepCoder:
+    env_type: deepcoder
+    max_actions_per_traj: 1
+    env_instruction: "You are solving a coding task. Provide a complete Python function solution only. Format: <answer>...</answer>"
+    max_tokens: 8000
+    parallel_friendly: true
+    max_workers: 32
+    env_config:
+      max_steps: 1
+
   FrozenLake:
     env_type: frozen_lake
     max_actions_per_traj: 10

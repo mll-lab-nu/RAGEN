@@ -9,10 +9,10 @@
 set -euo pipefail
 
 # Defaults
-STEPS=400
+STEPS=100
 TASK="webshop"
 CONFIG="_6_webshop"
-SAVE_FREQ=200
+SAVE_FREQ=100
 NUM_GROUPS=8
 GROUP_SIZE=16
 COMBOS_SELECTION=""
@@ -263,7 +263,7 @@ run_experiment() {
         "actor_rollout_ref.actor.filter_loss_scaling=none"
         "actor_rollout_ref.rollout.gpu_memory_utilization=${GPU_MEMORY_UTILIZATION}"
         "actor_rollout_ref.rollout.rollout_filter_strategy=${filter_strategy}"
-        "actor_rollout_ref.rollout.rollout_filter_top_p_prob_mode=softmax"
+        "actor_rollout_ref.rollout.rollout_filter_top_p_prob_mode=linear"
         "actor_rollout_ref.rollout.rollout_filter_type=largest"
         "actor_rollout_ref.rollout.rollout_filter_metric=reward_variance"
         "actor_rollout_ref.rollout.rollout_filter_include_zero=${include_zero}"
@@ -280,7 +280,7 @@ run_experiment() {
     algo_overrides=$(get_algo_overrides "$algo")
     read -r -a algo_args <<< "$algo_overrides"
 
-    local name="${task}-${algo}-${filter}-${model_name}-${NUM_GROUPS}x${GROUP_SIZE}"
+    local name="${task}-${algo}-${filter}-${model_name}-${NUM_GROUPS}x${GROUP_SIZE}-linear"
     local task_dir="${RESULT_ROOT}/webshop_small_combos"
     local log_path="${task_dir}/${name}.log"
     local checkpoint_dir="${CHECKPOINT_ROOT}/${model_name}/${algo}/${filter}/${name}"
@@ -551,7 +551,7 @@ done
             if [ "$exp_group" != "$group_label" ]; then
                 continue
             fi
-            name="${task}-${algo}-${filter}-${model_name}-${NUM_GROUPS}x${GROUP_SIZE}"
+            name="${task}-${algo}-${filter}-${model_name}-${NUM_GROUPS}x${GROUP_SIZE}-linear"
             task_dir="${RESULT_ROOT}/webshop_small_combos"
             if [ -f "${task_dir}/${name}.result" ]; then
                 cat "${task_dir}/${name}.result"

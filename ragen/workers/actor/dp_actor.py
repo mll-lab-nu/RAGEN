@@ -18,6 +18,7 @@ Single Process Actor
 import itertools
 import logging
 import os
+import time
 from typing import Tuple
 
 import torch
@@ -42,6 +43,28 @@ __all__ = ["DataParallelPPOActor"]
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
+_NCCL_DIAG_ENABLED = os.getenv("RAGEN_NCCL_DIAG", "0") == "1"
+
+
+def _nccl_diag_log(message: str) -> None:
+    if not _NCCL_DIAG_ENABLED:
+        return
+
+    rank = -1
+    world_size = -1
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        try:
+            rank = torch.distributed.get_rank()
+            world_size = torch.distributed.get_world_size()
+        except RuntimeError:
+            pass
+
+    local_rank = int(os.environ.get("LOCAL_RANK", -1))
+    cuda_device = torch.cuda.current_device() if torch.cuda.is_available() else -1
+    print(
+        f"[NCCL-DIAG][{time.time():.3f}][rank={rank}/{world_size}][local_rank={local_rank}][cuda={cuda_device}] {message}",
+        flush=True,
+    )
 
 
 class DataParallelPPOActor(BasePPOActor):
@@ -204,6 +227,21 @@ class DataParallelPPOActor(BasePPOActor):
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids"]
         batch = data.select(batch_keys=select_keys).batch
         has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
+        log_prob_context = data.meta_info.get("log_prob_context", "unspecified")
+        if _NCCL_DIAG_ENABLED:
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            compute_log_prob_start = time.perf_counter()
+            _nccl_diag_log(
+                "enter actor.compute_log_prob "
+                f"context={log_prob_context} "
+                f"input_shape={tuple(batch['input_ids'].shape)} "
+                f"response_shape={tuple(batch['responses'].shape)} "
+                f"micro_batch_size={micro_batch_size} "
+                f"use_dynamic_bsz={use_dynamic_bsz} "
+                f"calculate_entropy={calculate_entropy} "
+                f"has_multi_modal_inputs={has_multi_modal_inputs}"
+            )
 
         if has_multi_modal_inputs:
             num_micro_batches = data.batch.batch_size[0] // micro_batch_size
@@ -225,11 +263,47 @@ class DataParallelPPOActor(BasePPOActor):
 
         log_probs_lst = []
         entropy_lst = []
-        for micro_batch in micro_batches:
+        for micro_batch_idx, micro_batch in enumerate(micro_batches):
             if isinstance(micro_batch, DataProto):
+                input_shape = tuple(micro_batch.batch["input_ids"].shape)
+                response_shape = tuple(micro_batch.batch["responses"].shape)
                 micro_batch = {**micro_batch.batch, **micro_batch.non_tensor_batch}
-            with torch.no_grad():
-                entropy, log_probs = self._forward_micro_batch(micro_batch, temperature=temperature, calculate_entropy=calculate_entropy)
+            else:
+                input_shape = tuple(micro_batch["input_ids"].shape)
+                response_shape = tuple(micro_batch["responses"].shape)
+            if _NCCL_DIAG_ENABLED:
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                micro_batch_start = time.perf_counter()
+                _nccl_diag_log(
+                    "start actor.compute_log_prob micro_batch "
+                    f"context={log_prob_context} "
+                    f"idx={micro_batch_idx} input_shape={input_shape} response_shape={response_shape}"
+                )
+            try:
+                with torch.no_grad():
+                    entropy, log_probs = self._forward_micro_batch(
+                        micro_batch,
+                        temperature=temperature,
+                        calculate_entropy=calculate_entropy,
+                    )
+            except Exception as exc:
+                _nccl_diag_log(
+                    "exception actor.compute_log_prob micro_batch "
+                    f"context={log_prob_context} idx={micro_batch_idx} "
+                    f"exc={type(exc).__name__}: {exc}"
+                )
+                raise
+            if _NCCL_DIAG_ENABLED:
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                _nccl_diag_log(
+                    "end actor.compute_log_prob micro_batch "
+                    f"context={log_prob_context} idx={micro_batch_idx} "
+                    f"dt_s={time.perf_counter() - micro_batch_start:.3f} "
+                    f"log_probs_shape={tuple(log_probs.shape)} "
+                    f"entropy_shape={tuple(entropy.shape) if entropy is not None else None}"
+                )
             log_probs_lst.append(log_probs)
             if calculate_entropy:
                 entropy_lst.append(entropy)
@@ -251,6 +325,17 @@ class DataParallelPPOActor(BasePPOActor):
             assert len(indices) == log_probs.size(0), f"{len(indices)} vs. {log_probs.size()}"
             revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long)
             log_probs = log_probs[revert_indices]
+
+        if _NCCL_DIAG_ENABLED:
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            _nccl_diag_log(
+                "exit actor.compute_log_prob "
+                f"context={log_prob_context} "
+                f"micro_batches={len(log_probs_lst)} dt_s={time.perf_counter() - compute_log_prob_start:.3f} "
+                f"log_probs_shape={tuple(log_probs.shape)} "
+                f"entropy_shape={tuple(entropys.shape) if entropys is not None else None}"
+            )
 
         return log_probs, entropys
 

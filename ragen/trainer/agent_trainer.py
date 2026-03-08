@@ -499,6 +499,8 @@ class RayAgentTrainer(VerlRayPPOTrainer):
         if not enable_think:
             collapse_first = False
             collapse_multi = False
+        trainer_nnodes = int(self.config.trainer.get("nnodes", 1) or 1)
+        trainer_n_gpus = int(self.config.trainer.get("n_gpus_per_node", 1) or 1)
 
         self.collapse_detector = CollapseDetector(
             compute_freq=collapse_cfg.get("compute_freq", 10),
@@ -509,6 +511,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             num_samples=num_samples,
             std_eps=collapse_cfg.get("std_eps", 1e-3),
             ema_decay=collapse_cfg.get("ema_decay", 0.9),
+            log_prob_world_size=trainer_nnodes * trainer_n_gpus,
         )
 
 
@@ -868,7 +871,18 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 # recompute old_log_probs
 
                 with marked_timer("old_log_prob", timing_raw, color="blue"):
-                    old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                    had_log_prob_context = batch.meta_info is not None and "log_prob_context" in batch.meta_info
+                    old_log_prob_context = batch.meta_info.get("log_prob_context") if batch.meta_info is not None else None
+                    if batch.meta_info is None:
+                        batch.meta_info = {}
+                    batch.meta_info["log_prob_context"] = "trainer.old_log_prob"
+                    try:
+                        old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                    finally:
+                        if had_log_prob_context:
+                            batch.meta_info["log_prob_context"] = old_log_prob_context
+                        else:
+                            batch.meta_info.pop("log_prob_context", None)
                     entropys = old_log_prob.batch["entropys"]
                     response_masks = batch.batch["response_mask"]
                     loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
