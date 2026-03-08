@@ -32,7 +32,7 @@ cd ..
 
 echo "[Step] Installing additional dependencies for environments..."
 pip install IPython matplotlib gym gym_sokoban gymnasium "gymnasium[toy-text]" debugpy together anthropic faiss-cpu==1.11.0 numpy==1.26.4
-pip install "transformers==4.55.2"
+pip install "transformers==4.56.1"
 
 # echo "[Step] Downloading datasets..."
 # python scripts/download_data.py
