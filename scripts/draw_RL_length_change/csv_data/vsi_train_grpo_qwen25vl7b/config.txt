@@ -1,0 +1,716 @@
+{
+  "data": {
+    "seed": null,
+    "datagen": {
+      "name": null,
+      "path": null
+    },
+    "sampler": {
+      "class_name": null,
+      "class_path": null
+    },
+    "shuffle": true,
+    "use_shm": false,
+    "image_key": "images",
+    "tokenizer": null,
+    "val_files": "/work/nvme/bgig/kwang22/projects/viewsuite/VAGEN/examples/vsi_bench_train/val_delta.yaml",
+    "video_key": "videos",
+    "custom_cls": {
+      "name": "AgenticDataset",
+      "path": "vagen/gym_agent_dataset.py"
+    },
+    "prompt_key": "prompt",
+    "truncation": "error",
+    "train_files": "/work/nvme/bgig/kwang22/projects/viewsuite/VAGEN/examples/vsi_bench_train/train_delta.yaml",
+    "reward_fn_key": "data_source",
+    "val_batch_size": null,
+    "return_raw_chat": true,
+    "val_max_samples": -1,
+    "image_patch_size": 14,
+    "tool_config_path": null,
+    "train_batch_size": 32,
+    "max_prompt_length": 7000,
+    "train_max_samples": -1,
+    "trust_remote_code": false,
+    "return_full_prompt": false,
+    "validation_shuffle": false,
+    "max_response_length": 3000,
+    "return_raw_input_ids": false,
+    "dataloader_num_workers": 8,
+    "filter_overlong_prompts": false,
+    "return_multi_modal_inputs": true,
+    "filter_overlong_prompts_workers": 1
+  },
+  "critic": {
+    "model": {
+      "path": "/work/hdd/bgig/kwang22/Qwen2.5-VL-7B-Instruct",
+      "use_shm": false,
+      "_target_": "verl.workers.config.FSDPCriticModelCfg",
+      "lora_rank": 0,
+      "lora_alpha": 16,
+      "fsdp_config": {
+        "dtype": "bfloat16",
+        "_target_": "verl.workers.config.FSDPEngineConfig",
+        "strategy": "fsdp",
+        "fsdp_size": -1,
+        "model_dtype": "fp32",
+        "wrap_policy": {
+          "min_num_params": 0
+        },
+        "forward_only": false,
+        "param_offload": true,
+        "offload_policy": false,
+        "use_orig_params": false,
+        "forward_prefetch": false,
+        "optimizer_offload": true,
+        "use_torch_compile": true,
+        "entropy_checkpointing": false,
+        "reshard_after_forward": true,
+        "ulysses_sequence_parallel_size": 1,
+        "entropy_from_logits_with_chunking": false
+      },
+      "external_lib": null,
+      "target_modules": "all-linear",
+      "tokenizer_path": "/work/hdd/bgig/kwang22/Qwen2.5-VL-7B-Instruct",
+      "trust_remote_code": false,
+      "use_remove_padding": true,
+      "enable_activation_offload": false,
+      "enable_gradient_checkpointing": true
+    },
+    "optim": {
+      "lr": 1e-05,
+      "betas": [
+        0.9,
+        0.999
+      ],
+      "_target_": "verl.workers.config.FSDPOptimizerConfig",
+      "clip_grad": 1,
+      "optimizer": "AdamW",
+      "num_cycles": 0.5,
+      "min_lr_ratio": 0,
+      "warmup_style": null,
+      "weight_decay": 0.01,
+      "optimizer_impl": "torch.optim",
+      "lr_warmup_steps": -1,
+      "lr_scheduler_type": "constant",
+      "total_training_steps": 400,
+      "lr_warmup_steps_ratio": 0,
+      "override_optimizer_config": null
+    },
+    "enable": null,
+    "shuffle": false,
+    "_target_": "verl.workers.config.FSDPCriticConfig",
+    "profiler": {
+      "tool": null,
+      "ranks": [],
+      "enable": false,
+      "_target_": "verl.utils.profiler.ProfilerConfig",
+      "all_ranks": false,
+      "save_path": "outputs/profile",
+      "tool_config": {
+        "npu": {
+          "level": "level1",
+          "_target_": "verl.utils.profiler.config.NPUToolConfig",
+          "analysis": true,
+          "contents": [],
+          "discrete": false
+        },
+        "nsys": {
+          "_target_": "verl.utils.profiler.config.NsightToolConfig",
+          "discrete": false
+        },
+        "torch": {
+          "_target_": "verl.utils.profiler.config.TorchProfilerToolConfig",
+          "step_end": null,
+          "step_start": 0
+        },
+        "torch_memory": {
+          "_target_": "verl.utils.profiler.config.TorchMemoryToolConfig",
+          "stack_depth": 32,
+          "trace_alloc_max_entries": 100000
+        }
+      }
+    },
+    "strategy": "fsdp",
+    "grad_clip": 1,
+    "rollout_n": 8,
+    "checkpoint": {
+      "_target_": "verl.trainer.config.CheckpointConfig",
+      "async_save": false,
+      "load_contents": [
+        "model",
+        "optimizer",
+        "extra"
+      ],
+      "save_contents": [
+        "model",
+        "optimizer",
+        "extra"
+      ]
+    },
+    "ppo_epochs": 1,
+    "loss_agg_mode": "token-mean",
+    "cliprange_value": 0.5,
+    "use_dynamic_bsz": false,
+    "ppo_mini_batch_size": 32,
+    "ppo_micro_batch_size": null,
+    "forward_micro_batch_size": null,
+    "ppo_max_token_len_per_gpu": 32768,
+    "ppo_micro_batch_size_per_gpu": 1,
+    "forward_max_token_len_per_gpu": 32768,
+    "ulysses_sequence_parallel_size": 1,
+    "forward_micro_batch_size_per_gpu": 1
+  },
+  "filter": {
+    "name": "reward_variance",
+    "enable": false
+  },
+  "trainer": {
+    "device": "cuda",
+    "logger": [
+      "console",
+      "wandb"
+    ],
+    "nnodes": 1,
+    "val_only": false,
+    "log_image": {
+      "enable": false,
+      "max_pending": 2,
+      "png_compress_level": 0
+    },
+    "save_freq": 20,
+    "test_freq": 20,
+    "resume_mode": "auto",
+    "project_name": "vagen_experiments",
+    "total_epochs": 30,
+    "balance_batch": true,
+    "critic_warmup": 0,
+    "experiment_name": "vsi_train_grpo_qwen25vl7b",
+    "n_gpus_per_node": 8,
+    "default_hdfs_dir": null,
+    "resume_from_path": null,
+    "rollout_data_dir": "/work/hdd/bgig/kwang22/projects/viewsuite/exps/vagen_experiments/vsi_train_grpo_qwen25vl7b/rollout_data",
+    "val_before_train": true,
+    "default_local_dir": "/work/hdd/bgig/kwang22/projects/viewsuite/exps/vagen_experiments/vsi_train_grpo_qwen25vl7b/verl_checkpoints",
+    "esi_redundant_time": 0,
+    "log_val_generations": 32,
+    "validation_data_dir": "/work/hdd/bgig/kwang22/projects/viewsuite/exps/vagen_experiments/vsi_train_grpo_qwen25vl7b/validation",
+    "total_training_steps": 400,
+    "max_actor_ckpt_to_keep": 1,
+    "use_legacy_worker_impl": "auto",
+    "max_critic_ckpt_to_keep": 1,
+    "skip_special_tokens_val": false,
+    "del_local_ckpt_after_load": false,
+    "skip_special_tokens_train": false,
+    "ray_wait_register_center_timeout": 300,
+    "replace_image_tokens_for_logging": true,
+    "skip_special_tokens_in_validation": false
+  },
+  "algorithm": {
+    "lam": 1,
+    "gamma": 1,
+    "pf_ppo": {
+      "weight_pow": 2,
+      "reweight_method": "pow"
+    },
+    "kl_ctrl": {
+      "type": "fixed",
+      "horizon": 10000,
+      "kl_coef": 0,
+      "_target_": "verl.trainer.config.KLControlConfig",
+      "target_kl": 0.1
+    },
+    "_target_": "verl.trainer.config.AlgoConfig",
+    "kl_penalty": "kl",
+    "use_pf_ppo": false,
+    "reward_bias": -0.5,
+    "reward_clip": 20,
+    "reward_norm": true,
+    "adv_estimator": "grpo",
+    "reward_scaling": 10,
+    "reward_std_level": "group",
+    "use_kl_in_reward": false,
+    "reward_mean_level": "group",
+    "rollout_correction": {
+      "rollout_is": null,
+      "rollout_rs": null,
+      "bypass_mode": false,
+      "use_policy_gradient": false,
+      "rollout_is_threshold": 2,
+      "rollout_rs_threshold": null,
+      "rollout_is_batch_normalize": false,
+      "rollout_rs_threshold_lower": null,
+      "rollout_token_veto_threshold": null
+    },
+    "norm_adv_by_std_in_grpo": true
+  },
+  "ray_kwargs": {
+    "ray_init": {
+      "num_cpus": null
+    },
+    "timeline_json_file": null
+  },
+  "env_registry": {
+    "Sokoban": "vagen.envs.sokoban.sokoban_env.Sokoban",
+    "RemoteEnv": "vagen.envs_remote.GymImageEnvClient",
+    "ScannetAG": "view_suite.envs.scannet_proxy_task.gym_proxy_action_gen.GymProxyActionGen",
+    "FrozenLake": "vagen.envs.frozenlake.frozenlake_env.FrozenLake",
+    "ScannetTool": "view_suite.envs.scannet_proxy_task.gym_proxy_tool.GymProxyTool",
+    "ScannetNoTool": "view_suite.envs.scannet_proxy_task.gym_proxy_no_tool.GymProxyNoTool",
+    "ForwardDynamics": "view_suite.envs.scannet_proxy_task.forward_dynamics.ForwardDynamics",
+    "InverseDynamics": "view_suite.envs.scannet_proxy_task.inverse_dynamics.InverseDynamics",
+    "ActiveExploration": "view_suite.envs.scannet_proxy_task.active_exploration.ActiveExploration",
+    "MindCubeNoToolGym": "view_suite.envs.mindcube.gym_mindcube_no_tool.MindCubeNoToolGym",
+    "VSIBenchNoToolGym": "view_suite.envs.vsi_bench.gym_vsi_no_tool.VSIBenchNoToolGym",
+    "VSITrainNoToolGym": "view_suite.envs.vsi_bench_train.gym_vsi_train_no_tool.VSITrainNoToolGym",
+    "ViewSpatialNoToolGym": "view_suite.envs.view_spatial_bench.gym_view_spatial_no_tool.ViewSpatialNoToolGym"
+  },
+  "reward_model": {
+    "model": {
+      "path": "~/models/FsfairX-LLaMA3-RM-v0.1",
+      "use_shm": false,
+      "fsdp_config": {
+        "_target_": "verl.workers.config.FSDPEngineConfig",
+        "fsdp_size": -1,
+        "wrap_policy": {
+          "min_num_params": 0
+        },
+        "param_offload": false,
+        "forward_prefetch": false,
+        "reshard_after_forward": true
+      },
+      "external_lib": null,
+      "input_tokenizer": "/work/hdd/bgig/kwang22/Qwen2.5-VL-7B-Instruct",
+      "trust_remote_code": false,
+      "use_fused_kernels": true,
+      "use_remove_padding": false
+    },
+    "enable": false,
+    "nnodes": 0,
+    "profiler": {
+      "tool": null,
+      "ranks": [],
+      "enable": false,
+      "_target_": "verl.utils.profiler.ProfilerConfig",
+      "all_ranks": false,
+      "save_path": "outputs/profile",
+      "tool_config": {
+        "npu": {
+          "level": "level1",
+          "_target_": "verl.utils.profiler.config.NPUToolConfig",
+          "analysis": true,
+          "contents": [],
+          "discrete": false
+        },
+        "nsys": {
+          "_target_": "verl.utils.profiler.config.NsightToolConfig",
+          "discrete": false
+        },
+        "torch": {
+          "_target_": "verl.utils.profiler.config.TorchProfilerToolConfig",
+          "step_end": null,
+          "step_start": 0
+        },
+        "torch_memory": {
+          "_target_": "verl.utils.profiler.config.TorchMemoryToolConfig",
+          "stack_depth": 32,
+          "trace_alloc_max_entries": 100000
+        }
+      }
+    },
+    "strategy": "fsdp",
+    "max_length": null,
+    "reward_manager": "naive",
+    "sandbox_fusion": {
+      "url": null,
+      "max_concurrent": 64,
+      "memory_limit_mb": 1024
+    },
+    "n_gpus_per_node": 0,
+    "use_dynamic_bsz": false,
+    "micro_batch_size": null,
+    "enable_resource_pool": false,
+    "launch_reward_fn_async": false,
+    "micro_batch_size_per_gpu": null,
+    "forward_max_token_len_per_gpu": 32768,
+    "ulysses_sequence_parallel_size": 1
+  },
+  "transfer_queue": {
+    "enable": false
+  },
+  "global_profiler": {
+    "tool": null,
+    "steps": null,
+    "_target_": "verl.utils.profiler.ProfilerConfig",
+    "save_path": "outputs/profile",
+    "global_tool_config": {
+      "nsys": {
+        "_target_": "verl.utils.profiler.config.NsightToolConfig",
+        "discrete": false,
+        "worker_nsight_options": {
+          "kill": "none",
+          "trace": "cuda,nvtx,cublas,ucx",
+          "capture-range": "cudaProfilerApi",
+          "cuda-graph-trace": "graph",
+          "capture-range-end": null,
+          "cuda-memory-usage": "true"
+        },
+        "controller_nsight_options": {
+          "trace": "cuda,nvtx,cublas,ucx",
+          "cuda-graph-trace": "graph",
+          "cuda-memory-usage": "true"
+        }
+      },
+      "torch_memory": {
+        "stacks": "all",
+        "context": "all",
+        "stack_depth": 32,
+        "trace_alloc_max_entries": 100000
+      }
+    },
+    "profile_continuous_steps": false
+  },
+  "huggingface_hub": {
+    "private": false,
+    "repo_id": null,
+    "hf_save_freq": null
+  },
+  "actor_rollout_ref": {
+    "ref": {
+      "model": null,
+      "profiler": {
+        "tool": null,
+        "ranks": [],
+        "enable": false,
+        "_target_": "verl.utils.profiler.ProfilerConfig",
+        "all_ranks": false,
+        "save_path": "outputs/profile",
+        "tool_config": {
+          "npu": {
+            "level": "level1",
+            "_target_": "verl.utils.profiler.config.NPUToolConfig",
+            "analysis": true,
+            "contents": [],
+            "discrete": false
+          },
+          "nsys": {
+            "_target_": "verl.utils.profiler.config.NsightToolConfig",
+            "discrete": false
+          },
+          "torch": {
+            "_target_": "verl.utils.profiler.config.TorchProfilerToolConfig",
+            "step_end": null,
+            "step_start": 0
+          },
+          "torch_memory": {
+            "_target_": "verl.utils.profiler.config.TorchMemoryToolConfig",
+            "stack_depth": 32,
+            "trace_alloc_max_entries": 100000
+          }
+        }
+      },
+      "strategy": "fsdp",
+      "fsdp_config": {
+        "dtype": "bfloat16",
+        "_target_": "verl.workers.config.FSDPEngineConfig",
+        "strategy": "fsdp",
+        "fsdp_size": -1,
+        "model_dtype": "fp32",
+        "wrap_policy": {
+          "min_num_params": 0
+        },
+        "forward_only": false,
+        "param_offload": true,
+        "offload_policy": false,
+        "use_orig_params": false,
+        "forward_prefetch": false,
+        "optimizer_offload": false,
+        "use_torch_compile": true,
+        "entropy_checkpointing": false,
+        "reshard_after_forward": true,
+        "ulysses_sequence_parallel_size": 1,
+        "entropy_from_logits_with_chunking": false
+      },
+      "use_torch_compile": true,
+      "entropy_checkpointing": false,
+      "log_prob_use_dynamic_bsz": false,
+      "log_prob_micro_batch_size": null,
+      "log_prob_max_token_len_per_gpu": 16384,
+      "ulysses_sequence_parallel_size": 1,
+      "entropy_from_logits_with_chunking": false,
+      "log_prob_micro_batch_size_per_gpu": 1
+    },
+    "actor": {
+      "optim": {
+        "lr": 1e-06,
+        "betas": [
+          0.9,
+          0.999
+        ],
+        "_target_": "verl.workers.config.FSDPOptimizerConfig",
+        "clip_grad": 1,
+        "optimizer": "AdamW",
+        "num_cycles": 0.5,
+        "min_lr_ratio": 0,
+        "warmup_style": null,
+        "weight_decay": 0.01,
+        "optimizer_impl": "torch.optim",
+        "lr_warmup_steps": -1,
+        "lr_scheduler_type": "constant",
+        "total_training_steps": 400,
+        "lr_warmup_steps_ratio": 0,
+        "override_optimizer_config": null
+      },
+      "shuffle": false,
+      "_target_": "verl.workers.config.FSDPActorConfig",
+      "profiler": {
+        "tool": null,
+        "ranks": [],
+        "enable": false,
+        "_target_": "verl.utils.profiler.ProfilerConfig",
+        "all_ranks": false,
+        "save_path": "outputs/profile",
+        "tool_config": {
+          "npu": {
+            "level": "level1",
+            "_target_": "verl.utils.profiler.config.NPUToolConfig",
+            "analysis": true,
+            "contents": [],
+            "discrete": false
+          },
+          "nsys": {
+            "_target_": "verl.utils.profiler.config.NsightToolConfig",
+            "discrete": false
+          },
+          "torch": {
+            "_target_": "verl.utils.profiler.config.TorchProfilerToolConfig",
+            "step_end": null,
+            "step_start": 0
+          },
+          "torch_memory": {
+            "_target_": "verl.utils.profiler.config.TorchMemoryToolConfig",
+            "stack_depth": 32,
+            "trace_alloc_max_entries": 100000
+          }
+        }
+      },
+      "strategy": "fsdp",
+      "grad_clip": 1,
+      "checkpoint": {
+        "_target_": "verl.trainer.config.CheckpointConfig",
+        "async_save": false,
+        "load_contents": [
+          "model",
+          "hf_model",
+          "optimizer",
+          "extra"
+        ],
+        "save_contents": [
+          "model",
+          "hf_model",
+          "optimizer",
+          "extra"
+        ]
+      },
+      "clip_ratio": 0.2,
+      "ppo_epochs": 1,
+      "fsdp_config": {
+        "dtype": "bfloat16",
+        "_target_": "verl.workers.config.FSDPEngineConfig",
+        "strategy": "fsdp",
+        "fsdp_size": -1,
+        "model_dtype": "fp32",
+        "wrap_policy": {
+          "min_num_params": 0
+        },
+        "forward_only": false,
+        "param_offload": true,
+        "offload_policy": false,
+        "use_orig_params": false,
+        "forward_prefetch": false,
+        "optimizer_offload": true,
+        "use_torch_compile": true,
+        "entropy_checkpointing": false,
+        "reshard_after_forward": true,
+        "ulysses_sequence_parallel_size": 1,
+        "entropy_from_logits_with_chunking": false
+      },
+      "policy_loss": {
+        "_target_": "verl.workers.config.PolicyLossConfig",
+        "loss_mode": "vanilla",
+        "clip_cov_lb": 1,
+        "clip_cov_ub": 5,
+        "ppo_kl_coef": 0.1,
+        "kl_cov_ratio": 0.0002,
+        "clip_cov_ratio": 0.0002
+      },
+      "use_kl_loss": false,
+      "clip_ratio_c": 3,
+      "kl_loss_coef": 0,
+      "kl_loss_type": "low_var_kl",
+      "entropy_coeff": 0,
+      "loss_agg_mode": "token-mean",
+      "clip_ratio_low": 0.2,
+      "clip_ratio_high": 0.2,
+      "use_dynamic_bsz": false,
+      "use_fused_kernels": true,
+      "use_torch_compile": true,
+      "use_remove_padding": true,
+      "freeze_vision_tower": false,
+      "ppo_mini_batch_size": 32,
+      "ppo_micro_batch_size": null,
+      "entropy_checkpointing": false,
+      "ppo_max_token_len_per_gpu": 16384,
+      "ppo_micro_batch_size_per_gpu": 1,
+      "ulysses_sequence_parallel_size": 1,
+      "entropy_from_logits_with_chunking": false
+    },
+    "model": {
+      "path": "/work/hdd/bgig/kwang22/Qwen2.5-VL-7B-Instruct",
+      "use_shm": false,
+      "_target_": "verl.workers.config.HFModelConfig",
+      "lora_rank": 0,
+      "use_liger": false,
+      "lora_alpha": 16,
+      "external_lib": null,
+      "hf_config_path": null,
+      "target_modules": "all-linear",
+      "tokenizer_path": null,
+      "exclude_modules": null,
+      "lora_adapter_path": null,
+      "trust_remote_code": false,
+      "use_fused_kernels": true,
+      "use_remove_padding": true,
+      "custom_chat_template": null,
+      "fused_kernel_options": {
+        "impl_backend": "torch"
+      },
+      "enable_activation_offload": false,
+      "enable_gradient_checkpointing": true
+    },
+    "rollout": {
+      "n": 8,
+      "mode": "async",
+      "name": "sglang",
+      "agent": {
+        "_target_": "verl.workers.config.AgentLoopConfig",
+        "num_workers": 8,
+        "default_agent_loop": "single_turn_agent",
+        "custom_async_server": {
+          "name": null,
+          "path": null,
+          "_target_": "verl.workers.config.CustomAsyncServerConfig"
+        },
+        "agent_loop_config_path": "/work/nvme/bgig/kwang22/projects/viewsuite/VAGEN/vagen/configs/agent.yaml"
+      },
+      "dtype": "bfloat16",
+      "top_k": -1,
+      "top_p": 0.9,
+      "trace": {
+        "backend": null,
+        "_target_": "verl.workers.config.TraceConfig",
+        "token2text": false
+      },
+      "_target_": "verl.workers.config.RolloutConfig",
+      "profiler": {
+        "tool": null,
+        "ranks": [],
+        "enable": false,
+        "_target_": "verl.utils.profiler.ProfilerConfig",
+        "all_ranks": false,
+        "save_path": "outputs/profile",
+        "tool_config": {
+          "npu": {
+            "level": "level1",
+            "_target_": "verl.utils.profiler.config.NPUToolConfig",
+            "analysis": true,
+            "contents": [],
+            "discrete": false
+          },
+          "nsys": {
+            "_target_": "verl.utils.profiler.config.NsightToolConfig",
+            "discrete": false
+          },
+          "torch": {
+            "_target_": "verl.utils.profiler.config.TorchProfilerToolConfig",
+            "step_end": null,
+            "step_start": 0
+          },
+          "torch_memory": {
+            "_target_": "verl.utils.profiler.config.TorchMemoryToolConfig",
+            "stack_depth": 32,
+            "trace_alloc_max_entries": 100000
+          }
+        }
+      },
+      "do_sample": true,
+      "ignore_eos": false,
+      "multi_turn": {
+        "enable": true,
+        "format": "hermes",
+        "_target_": "verl.workers.config.MultiTurnConfig",
+        "max_user_turns": null,
+        "tool_config_path": null,
+        "max_parallel_calls": 1,
+        "max_assistant_turns": null,
+        "num_repeat_rollouts": null,
+        "interaction_config_path": null,
+        "max_tool_response_length": 256,
+        "tool_response_truncate_side": "middle",
+        "use_inference_chat_template": false,
+        "tokenization_sanity_check_mode": "strict"
+      },
+      "prometheus": {
+        "file": "/tmp/ray/session_latest/metrics/prometheus/prometheus.yml",
+        "port": 9090,
+        "enable": false,
+        "_target_": "verl.workers.config.PrometheusConfig",
+        "served_model_name": "/work/hdd/bgig/kwang22/Qwen2.5-VL-7B-Instruct"
+      },
+      "val_kwargs": {
+        "n": 1,
+        "top_k": -1,
+        "top_p": 1,
+        "_target_": "verl.workers.config.SamplingConfig",
+        "do_sample": false,
+        "temperature": 0
+      },
+      "load_format": "dummy",
+      "temperature": 0.7,
+      "max_num_seqs": 1024,
+      "skip_rollout": false,
+      "enforce_eager": true,
+      "max_model_len": null,
+      "prompt_length": 7000,
+      "skip_dump_dir": "/tmp/rollout_dump",
+      "layered_summon": false,
+      "response_length": 3000,
+      "over_sample_rate": 0,
+      "disable_log_stats": false,
+      "free_cache_engine": true,
+      "data_parallel_size": 1,
+      "calculate_log_probs": false,
+      "multi_stage_wake_up": false,
+      "skip_tokenizer_init": true,
+      "expert_parallel_size": 1,
+      "enable_prefix_caching": true,
+      "enable_chunked_prefill": true,
+      "gpu_memory_utilization": 0.6,
+      "max_num_batched_tokens": 10000,
+      "cudagraph_capture_sizes": null,
+      "log_prob_use_dynamic_bsz": false,
+      "log_prob_micro_batch_size": null,
+      "tensor_model_parallel_size": 1,
+      "pipeline_model_parallel_size": 1,
+      "log_prob_max_token_len_per_gpu": 16384,
+      "update_weights_bucket_megabytes": 512,
+      "log_prob_micro_batch_size_per_gpu": 1
+    },
+    "nccl_timeout": 600,
+    "hybrid_engine": true
+  },
+  "custom_reward_function": {
+    "name": "compute_score",
+    "path": null
+  }
+}
