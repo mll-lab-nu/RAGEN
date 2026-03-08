@@ -23,7 +23,7 @@ Goal:
 
 Key Details:
 - Reward-variance filtering scores each env group by the standard deviation of rollout rewards within the group
-- Selection uses `top_p`, `largest`, and `reward_variance`: groups are ranked by reward-variance mass and the smallest set covering threshold `p` is kept
+- Selection uses `top_p`, `largest`, `reward_variance`, and explicitly fixes `rollout_filter_top_p_prob_mode=softmax`
 - Filtered groups are dropped as whole groups, and this sweep keeps `filter_loss_scaling=none`
 - `1.0` and `nofilter` are different conditions: `1.0` still uses `include_zero=False`, while `nofilter` sets `include_zero=True`
 
@@ -161,6 +161,7 @@ Outputs:
   - `es_manager.val.env_groups=512`, `es_manager.val.group_size=1`
 - Rollout filter settings used by these sweeps:
   - `rollout_filter_strategy=top_p`
+  - `rollout_filter_top_p_prob_mode=softmax`
   - `rollout_filter_type=largest`
   - `rollout_filter_metric=reward_variance`
 - Top-p sweep uses two distinct `top_p=1.0` conditions:

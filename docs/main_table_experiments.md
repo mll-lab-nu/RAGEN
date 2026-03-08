@@ -111,6 +111,7 @@ Outputs:
 
 - Effective rollout filter config for main-table runs:
   - `rollout_filter_strategy=top_p`
+  - `rollout_filter_top_p_prob_mode=softmax`
   - `rollout_filter_type=largest`
   - `rollout_filter_metric=reward_variance`
   - `rollout_filter_include_zero=True`

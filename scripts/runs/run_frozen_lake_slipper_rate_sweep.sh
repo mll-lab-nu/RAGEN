@@ -355,6 +355,7 @@ PY
         actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
         actor_rollout_ref.rollout.gpu_memory_utilization="${GPU_MEMORY_UTILIZATION}" \
         actor_rollout_ref.rollout.rollout_filter_strategy=top_p \
+        actor_rollout_ref.rollout.rollout_filter_top_p_prob_mode=softmax \
         actor_rollout_ref.rollout.rollout_filter_value="${top_p}" \
         actor_rollout_ref.rollout.rollout_filter_include_zero="${include_zero}" \
         actor_rollout_ref.rollout.rollout_filter_type=largest \

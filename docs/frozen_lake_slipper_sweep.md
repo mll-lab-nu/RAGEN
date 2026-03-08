@@ -22,6 +22,7 @@ Goal:
 Key Details:
 - `slipper_rate` is normalized to a ratio in `[0, 1]`, and the environment is configured with `success_rate = 1 - slipper_rate`
 - Default comparison modes are both `filter` and `nofilter`
+- This script explicitly fixes `rollout_filter_top_p_prob_mode=softmax`
 - Mode mapping:
   - `filter`: `top_p=0.9` by default and `rollout_filter_include_zero=False`
   - `nofilter`: `top_p=1.0` by default and `rollout_filter_include_zero=True`
@@ -85,6 +86,7 @@ Outputs:
   - `actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8`
   - `actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8`
   - `actor_rollout_ref.rollout.rollout_filter_strategy=top_p`
+  - `actor_rollout_ref.rollout.rollout_filter_top_p_prob_mode=softmax`
   - `actor_rollout_ref.rollout.rollout_filter_type=largest`
   - `actor_rollout_ref.rollout.rollout_filter_metric=reward_variance`
   - `actor_rollout_ref.rollout.gpu_memory_utilization=0.5`

@@ -22,6 +22,8 @@ class RolloutFilterConfig:
     metric: str = "reward_variance"
     include_zero: bool = True
     strategy: str = "top_p"
+    top_p_prob_mode: str = "linear"
+    selection_eps: float = 0.01
 
 
 class RolloutFilter:
@@ -75,41 +77,52 @@ class RolloutFilter:
             if self.value >= 1.0:
                 return indices
 
-            # Nucleus Sampling (Cumulative Probability)
-            # 1. Determine logits for softmax
-            if self.filter_type == "largest":
-                logits = scores
-            elif self.filter_type == "smallest":
-                logits = -scores
+            # Nucleus-like filtering with two score aggregation modes.
+            if self.config.top_p_prob_mode == "softmax":
+                if self.filter_type == "largest":
+                    logits = scores
+                elif self.filter_type == "smallest":
+                    logits = -scores
+                else:
+                    raise ValueError(f"Invalid rollout filter type: {self.filter_type}")
+                probs = torch.softmax(logits, dim=0)
+                sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+                cumulative_probs = torch.cumsum(sorted_probs, dim=0)
+                cutoff_index = torch.searchsorted(cumulative_probs, self.value).item()
+                k = cutoff_index + 1
+                k = min(k, indices.numel())
+                top_groups_local_indices = sorted_indices[:k]
+                return indices[top_groups_local_indices]
+
+            elif self.config.top_p_prob_mode == "linear":
+                if self.filter_type == "largest":
+                    sorted_scores, sorted_indices = torch.sort(scores, descending=True)
+                elif self.filter_type == "smallest":
+                    sorted_scores, sorted_indices = torch.sort(scores, descending=False)
+                else:
+                    raise ValueError(f"Invalid rollout filter type: {self.filter_type}")
+
+                threshold = self.value * scores.sum() - self.config.selection_eps
+                cumulative_score = 0.0
+                selected_count = 0
+
+                for score in sorted_scores:
+                    if cumulative_score >= threshold:
+                        break
+                    if score.item() <= 0:
+                        break
+                    cumulative_score += score.item()
+                    selected_count += 1
+
+                if cumulative_score >= threshold:
+                    top_groups_local_indices = sorted_indices[:selected_count]
+                    return indices[top_groups_local_indices]
+                return torch.empty(0, dtype=torch.long, device=indices.device)
             else:
-                raise ValueError(f"Invalid rollout filter type: {self.filter_type}")
-
-            # 2. Compute probabilities (linear normalization)
-            shifted = logits - logits.min()
-            total = shifted.sum()
-            if total > 1e-10:
-                probs = shifted / total
-            else:
-                probs = torch.ones_like(logits) / logits.numel()
-
-            # 3. Sort probabilities in descending order
-            sorted_probs, sorted_indices = torch.sort(probs, descending=True)
-
-            # 4. Compute cumulative sum
-            cumulative_probs = torch.cumsum(sorted_probs, dim=0)
-
-            # 5. Cutoff at P (self.value)
-            # Select elements where cumulative probability is <= P, plus the first one that exceeds it
-            # To do this, we find the first index where cumulative_probs > P
-            cutoff_index = torch.searchsorted(cumulative_probs, self.value).item()
-            
-            # Ensure we select at least one
-            k = cutoff_index + 1
-            k = min(k, indices.numel())
-            
-            # Select the top k indices from the sorted order
-            top_groups_local_indices = sorted_indices[:k]
-            return indices[top_groups_local_indices]
+                raise ValueError(
+                    f"Unknown top_p_prob_mode: {self.config.top_p_prob_mode}. "
+                    "Expected one of {'linear', 'softmax'}."
+                )
 
         elif self.strategy == "top_k":
             # top-k: choose top k fraction of the groups
@@ -184,6 +197,11 @@ class RolloutFilter:
 
         return batch
 
+    def _selected_mean(self, values: torch.Tensor, selected: torch.Tensor) -> torch.Tensor:
+        if selected.numel() == 0:
+            return torch.zeros((), device=values.device, dtype=values.dtype)
+        return values[selected].mean()
+
     def _build_base_metrics(
         self,
         in_group_std: torch.Tensor,
@@ -200,9 +218,9 @@ class RolloutFilter:
         chosen = top_groups
         metrics.update(
             {
-                "rollout/chosen_in_group_std": in_group_std[chosen].mean(),
-                "rollout/chosen_in_group_max": in_group_max[chosen].mean(),
-                "rollout/chosen_in_group_mean": in_group_mean[chosen].mean(),
+                "rollout/chosen_in_group_std": self._selected_mean(in_group_std, chosen),
+                "rollout/chosen_in_group_max": self._selected_mean(in_group_max, chosen),
+                "rollout/chosen_in_group_mean": self._selected_mean(in_group_mean, chosen),
             }
         )
         return metrics
@@ -281,9 +299,9 @@ class LengthRolloutFilter(RolloutFilter):
                 "rollout/in_group_length_std": in_group_std.mean(),
                 "rollout/in_group_length_max": in_group_max.mean(),
                 "rollout/in_group_length_mean": in_group_mean.mean(),
-                "rollout/chosen_in_group_length_std": in_group_std[top_groups].mean(),
-                "rollout/chosen_in_group_length_max": in_group_max[top_groups].mean(),
-                "rollout/chosen_in_group_length_mean": in_group_mean[top_groups].mean(),
+                "rollout/chosen_in_group_length_std": self._selected_mean(in_group_std, top_groups),
+                "rollout/chosen_in_group_length_max": self._selected_mean(in_group_max, top_groups),
+                "rollout/chosen_in_group_length_mean": self._selected_mean(in_group_mean, top_groups),
                 "rollout/filter_kept_count": torch.tensor(float(top_groups.numel())),
                 "rollout/filter_kept_ratio": torch.tensor(top_groups.numel() / self.num_groups),
                 "rollout/filter_zero_count": (torch.abs(selection_scores) <= 1e-10).sum(),
@@ -392,9 +410,9 @@ class RewardRolloutFilter(RolloutFilter):
                 "rollout/in_group_reward_std": in_group_std.mean(),
                 "rollout/in_group_reward_max": in_group_max.mean(),
                 "rollout/in_group_reward_mean": in_group_mean.mean(),
-                "rollout/chosen_in_group_reward_std": in_group_std[top_groups].mean(),
-                "rollout/chosen_in_group_reward_max": in_group_max[top_groups].mean(),
-                "rollout/chosen_in_group_reward_mean": in_group_mean[top_groups].mean(),
+                "rollout/chosen_in_group_reward_std": self._selected_mean(in_group_std, top_groups),
+                "rollout/chosen_in_group_reward_max": self._selected_mean(in_group_max, top_groups),
+                "rollout/chosen_in_group_reward_mean": self._selected_mean(in_group_mean, top_groups),
                 "rollout/filter_kept_count": torch.tensor(float(top_groups.numel())),
                 "rollout/filter_kept_ratio": torch.tensor(top_groups.numel() / self.num_groups),
                 "rollout/filter_zero_count": (torch.abs(selection_scores) <= 1e-10).sum(),
@@ -525,9 +543,9 @@ class EntropyRolloutFilter(RolloutFilter):
                 "rollout/in_group_entropy_std": in_group_std.mean(),
                 "rollout/in_group_entropy_max": in_group_max.mean(),
                 "rollout/in_group_entropy_mean": in_group_mean.mean(),
-                "rollout/chosen_in_group_entropy_std": in_group_std[top_groups].mean(),
-                "rollout/chosen_in_group_entropy_max": in_group_max[top_groups].mean(),
-                "rollout/chosen_in_group_entropy_mean": in_group_mean[top_groups].mean(),
+                "rollout/chosen_in_group_entropy_std": self._selected_mean(in_group_std, top_groups),
+                "rollout/chosen_in_group_entropy_max": self._selected_mean(in_group_max, top_groups),
+                "rollout/chosen_in_group_entropy_mean": self._selected_mean(in_group_mean, top_groups),
                 "rollout/filter_kept_count": torch.tensor(float(top_groups.numel())),
                 "rollout/filter_kept_ratio": torch.tensor(top_groups.numel() / self.num_groups),
                 "rollout/filter_zero_count": (torch.abs(selection_scores) <= 1e-10).sum(),
@@ -573,6 +591,8 @@ def build_rollout_filter(
     compute_log_prob: Optional[Callable[[DataProto], DataProto]] = None,
     include_zero: bool = True,
     strategy: str = "top_p",
+    top_p_prob_mode: str = "linear",
+    selection_eps: float = 0.01,
 ) -> RolloutFilter:
     metric = (metric or "reward_variance").lower()
     metric = {
@@ -588,6 +608,8 @@ def build_rollout_filter(
         metric=metric,
         include_zero=include_zero,
         strategy=strategy,
+        top_p_prob_mode=top_p_prob_mode,
+        selection_eps=selection_eps,
     )
 
     if metric == "length":

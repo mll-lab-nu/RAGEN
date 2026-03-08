@@ -265,6 +265,7 @@ run_experiment() {
         ppo_mini_batch_size=32 \
         actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
         actor_rollout_ref.rollout.rollout_filter_strategy=top_p \
+        actor_rollout_ref.rollout.rollout_filter_top_p_prob_mode=softmax \
         actor_rollout_ref.rollout.rollout_filter_value=${filter_value} \
         actor_rollout_ref.rollout.rollout_filter_include_zero=${include_zero} \
         actor_rollout_ref.rollout.rollout_filter_type=largest \

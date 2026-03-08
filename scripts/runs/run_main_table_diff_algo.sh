@@ -260,6 +260,7 @@ run_experiment() {
         "actor_rollout_ref.actor.filter_loss_scaling=none"
         "actor_rollout_ref.rollout.gpu_memory_utilization=${GPU_MEMORY_UTILIZATION}"
         "actor_rollout_ref.rollout.rollout_filter_strategy=${filter_strategy}"
+        "actor_rollout_ref.rollout.rollout_filter_top_p_prob_mode=softmax"
         "actor_rollout_ref.rollout.rollout_filter_type=largest"
         "actor_rollout_ref.rollout.rollout_filter_metric=reward_variance"
         "actor_rollout_ref.rollout.rollout_filter_include_zero=True"

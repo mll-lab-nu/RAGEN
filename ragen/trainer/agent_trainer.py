@@ -251,6 +251,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
         self.first_10_steps_variances = []
         self.base_variance = None
         self.consecutive_variances = collections.deque(maxlen=10)
+        self.consecutive_empty_filtered_steps = 0
         self.consecutive_low_success = collections.defaultdict(int)
         self.early_stopped = False
         self.early_stop_type = None
@@ -470,6 +471,8 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             compute_log_prob=self.actor_rollout_wg.compute_log_prob,
             include_zero=getattr(rollout_cfg, "rollout_filter_include_zero", True),
             strategy=getattr(rollout_cfg, "rollout_filter_strategy", "top_p"),
+            top_p_prob_mode=getattr(rollout_cfg, "rollout_filter_top_p_prob_mode", "linear"),
+            selection_eps=getattr(rollout_cfg, "rollout_filter_selection_eps", 0.01),
         )
 
         # create collapse detector
@@ -643,50 +646,40 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             is_last_step = self.global_steps >= self.total_training_steps
 
             with marked_timer("step", timing_raw):
-                # generate a batch
-                attempts = 0
-                max_attempts = 10
-                batch = None
-                
-                while attempts < max_attempts:
-                    attempts += 1
-                    with marked_timer("gen", timing_raw):
-                        batch = DataProto()
-                        batch.meta_info = batch.meta_info or {}
-                        batch.meta_info["compute_collapse"] = self.collapse_detector.should_compute(
-                            self.global_steps
-                        )
-                        batch = self.agent_proxy.rollout(batch, val=False)
+                # Generate and filter exactly once per training step. If the
+                # filtered batch is empty, treat this step as empty_after_filter
+                # and move to the next step instead of retrying rollout.
+                attempts = 1
+                batch = DataProto()
+                batch.meta_info = batch.meta_info or {}
+                batch.meta_info["compute_collapse"] = self.collapse_detector.should_compute(
+                    self.global_steps
+                )
 
-                    metrics = {}
+                with marked_timer("gen", timing_raw):
+                    batch = self.agent_proxy.rollout(batch, val=False)
 
-                    # Compute collapse detection metrics before filtering (for fair comparison)
-                    with marked_timer("collapse_metrics", timing_raw, color="cyan"):
-                        collapse_metrics = self.collapse_detector.compute_collapse_metrics(
-                            batch=batch,
-                            actor_compute_log_prob_fn=self.actor_rollout_wg.compute_log_prob,
-                            global_step=self.global_steps,
-                        )
-                        metrics.update(collapse_metrics)
+                metrics = {}
 
-                    with marked_timer("filter", timing_raw):
-                        # Filter first, then adjust batch size
-                        batch, filter_metrics = self.rollout_filter.filter(batch)
-                        metrics.update(filter_metrics)
-                        
-                        # Add kept ratio to meta_info for loss scaling
-                        if "rollout/filter_kept_ratio" in metrics:
-                            batch.meta_info["filter_kept_ratio"] = metrics["rollout/filter_kept_ratio"]
-                        else:
-                            batch.meta_info["filter_kept_ratio"] = 1.0
+                # Compute collapse detection metrics before filtering (for fair comparison)
+                with marked_timer("collapse_metrics", timing_raw, color="cyan"):
+                    collapse_metrics = self.collapse_detector.compute_collapse_metrics(
+                        batch=batch,
+                        actor_compute_log_prob_fn=self.actor_rollout_wg.compute_log_prob,
+                        global_step=self.global_steps,
+                    )
+                    metrics.update(collapse_metrics)
 
-                        if len(batch) > 0:
-                            break
-                        else:
-                            print(f"[Warning] Attempt {attempts}/{max_attempts}: all samples filtered out. Retrying rollout...")
-                    
-                    if self.early_stopped:
-                        break
+                with marked_timer("filter", timing_raw):
+                    # Filter first, then adjust batch size
+                    batch, filter_metrics = self.rollout_filter.filter(batch)
+                    metrics.update(filter_metrics)
+
+                    # Add kept ratio to meta_info for loss scaling
+                    if "rollout/filter_kept_ratio" in metrics:
+                        batch.meta_info["filter_kept_ratio"] = metrics["rollout/filter_kept_ratio"]
+                    else:
+                        batch.meta_info["filter_kept_ratio"] = 1.0
 
                 if self.early_stopped:
                     print("[Early Stopping] Stopping training.")
@@ -696,8 +689,51 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                     break
 
                 if len(batch) == 0:
-                    # print(f"[Error] Failed to find any valid samples after {max_attempts} attempts. Skipping this training step.")
-                    raise ValueError("Failed to find any valid samples after {} attempts".format(max_attempts))
+                    self.consecutive_empty_filtered_steps += 1
+                    empty_stop_steps = getattr(
+                        self.config.actor_rollout_ref.rollout,
+                        "rollout_filter_empty_stop_steps",
+                        10,
+                    )
+                    metrics.update(
+                        {
+                            "train/rollout_attempts": attempts,
+                            "rollout/empty_after_filter": 1.0,
+                            "rollout/consecutive_empty_after_filter_steps": float(
+                                self.consecutive_empty_filtered_steps
+                            ),
+                        }
+                    )
+
+                    if (
+                        empty_stop_steps > 0
+                        and self.consecutive_empty_filtered_steps >= empty_stop_steps
+                    ):
+                        print(
+                            f"[Early Stopping] No samples kept after filtering for "
+                            f"{self.consecutive_empty_filtered_steps} consecutive steps."
+                        )
+                        self.early_stopped = True
+                        self.early_stop_type = "empty_filtered_steps"
+                        metrics.update({self._early_stop_metric_key(): 1.0})
+                    else:
+                        print(
+                            f"[Warning] No samples kept after filtering for this step. "
+                            f"Consecutive empty steps: {self.consecutive_empty_filtered_steps}."
+                        )
+
+                    logger.log(data=metrics, step=self.global_steps)
+
+                    if self.early_stopped or is_last_step:
+                        _finish_logger()
+                        progress_bar.close()
+                        return
+
+                    progress_bar.update(1)
+                    self.global_steps += 1
+                    continue
+
+                self.consecutive_empty_filtered_steps = 0
 
                 # Adjust batch size to be divisible by num_groups, ppo_mini_batch_size, and n_gpus
                 num_groups = self.config.es_manager.train.env_groups
@@ -713,7 +749,9 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 metrics.update({
                     "train/batch_size": batch_size,
                     "train/num_mini_batches": num_mini_batches,
-                    "train/rollout_attempts": attempts
+                    "train/rollout_attempts": attempts,
+                    "rollout/empty_after_filter": 0.0,
+                    "rollout/consecutive_empty_after_filter_steps": 0.0,
                 })
                 metrics.update({"train/" + key: value for key, value in batch.meta_info["metrics"].items()})
 
