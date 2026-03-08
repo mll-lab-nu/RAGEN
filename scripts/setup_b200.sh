@@ -39,8 +39,8 @@ pip install IPython matplotlib gym gym_sokoban gymnasium "gymnasium[toy-text]" d
 # echo "[Step] Installing spatial environment..."
 # pip install -e ragen/env/spatial/Base
 
-echo "[Step] Setup WebShop environment + data..."
-bash scripts/setup_webshop.sh
+# echo "[Step] Setup WebShop environment + data..."
+# bash scripts/setup_webshop.sh
 
 # echo "[Step] Installing Lean environment dependencies..."
 # pip install -e ".[lean]"
