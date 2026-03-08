@@ -135,7 +135,10 @@ class ContextManager:
                 action_lookup_str += f"\nYou can make up to {env_config_new['max_actions_per_traj']} actions, separated by the action separator \" " + self.action_sep + " \"\n"
                 env_instruction += action_lookup_str
             prefixes[env_tag] = env_instruction
-            env_config_lookup[env_tag] = {'max_tokens': env_config.get("max_tokens", self.config.actor_rollout_ref.rollout.response_length)}
+            env_config_lookup[env_tag] = {
+                'max_tokens': env_config.get("max_tokens", self.config.actor_rollout_ref.rollout.response_length),
+                'action_lookup': env_config_new.get("action_lookup", {}),
+            }
 
         tags = self.es_cfg.env_configs.tags
         n_groups = self.es_cfg.env_configs.n_groups
@@ -666,7 +669,7 @@ class ContextManager:
 
     # ==================== Summary Memory ====================
 
-    def _build_episode_summary(self, old_history: List[Dict]) -> str:
+    def _build_episode_summary(self, old_history: List[Dict], env_id=None) -> str:
         """
         Build a compact template-based summary of turns that fall outside the
         recent context window.  Called when enable_summary_memory=True and
@@ -684,6 +687,11 @@ class ContextManager:
             return ""
 
         n = len(old_history)
+
+        # --- action lookup for human-readable names ---
+        action_lookup = {}
+        if env_id is not None:
+            action_lookup = self.env_config_lookup.get(env_id, {}).get("action_lookup", {})
 
         # --- collect actions ---
         all_actions: List[str] = []
@@ -709,9 +717,12 @@ class ContextManager:
             1 for h in old_history if h.get("manager_invalid_action", False)
         )
 
+        def _action_name(a):
+            return action_lookup.get(a, str(a))
+
         lines = [
             f"[Memory: {n} earlier step(s) summarized, not shown in full]",
-            f"Actions tried: {', '.join(str(a) for a in all_actions) if all_actions else 'none'}",
+            f"Actions tried: {', '.join(_action_name(a) for a in all_actions) if all_actions else 'none'}",
             f"Effective moves: {effective_count}/{len(all_actions)}",
             f"Cumulative reward from these steps: {total_reward:.2f}",
         ]
@@ -719,7 +730,6 @@ class ContextManager:
             lines.append(f"Invalid action format: {invalid_count} time(s). Valid actions are: Up, Down, Left, Right (separated by ' || ').")
         if any_success:
             lines.append("Note: puzzle was already solved during these steps.")
-
         return "\n".join(lines)
 
     # ==================== End Summary Memory ====================
@@ -841,7 +851,7 @@ class ContextManager:
                 enable_summary = getattr(self.config.agent_proxy, "enable_summary_memory", False)
                 old_history_summary = None
                 if enable_summary and history_start > 0:
-                    old_history_summary = self._build_episode_summary(history[:history_start])
+                    old_history_summary = self._build_episode_summary(history[:history_start], env_id=env_output["env_id"])
 
                 messages = self._build_single_turn_messages(
                     env_output=env_output,
@@ -939,7 +949,7 @@ class ContextManager:
                 # Summary memory for limited_multi_turn
                 enable_summary = getattr(self.config.agent_proxy, "enable_summary_memory", False)
                 if enable_summary and history_start > 0:
-                    old_summary = self._build_episode_summary(history[:history_start])
+                    old_summary = self._build_episode_summary(history[:history_start], env_id=env_output["env_id"])
                     messages[1]["content"] = old_summary + "\n\n"
 
                 # Add all turns from history_start to turn_idx (inclusive)
@@ -1093,7 +1103,7 @@ class ContextManager:
             if context_window_mode == "single_turn":
                 enable_summary = getattr(self.config.agent_proxy, "enable_summary_memory", False)
                 old_history_summary = (
-                    self._build_episode_summary(old_history_for_summary)
+                    self._build_episode_summary(old_history_for_summary, env_id=env_output["env_id"])
                     if enable_summary and old_history_for_summary
                     else None
                 )
@@ -1104,7 +1114,7 @@ class ContextManager:
             elif context_window_mode == "limited_multi_turn":
                 enable_summary = getattr(self.config.agent_proxy, "enable_summary_memory", False)
                 old_history_summary = (
-                    self._build_episode_summary(old_history_for_summary)
+                    self._build_episode_summary(old_history_for_summary, env_id=env_output["env_id"])
                     if enable_summary and old_history_for_summary
                     else None
                 )

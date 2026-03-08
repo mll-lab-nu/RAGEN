@@ -71,7 +71,8 @@ custom_envs:
       Before every action, read the current state carefully and begin your thinking with the exact coordinates:
       Player: (row, col) | Box: (row, col) | Target: (row, col)
       Then derive your move from these coordinates. Do not rely on memory of previous states.
-    max_tokens: 120
+      Keep <think> under 150 tokens to leave room for <answer>.
+    max_tokens: 256
     parallel_friendly: false
     max_workers: 32
     env_config: # keys should be a subset of SokobanConfig

@@ -224,11 +224,7 @@ class EnvStateManager:
             acc_reward, turn_info, turn_done, executed_actions = _execute_actions(env, valid_actions[:actions_left_before])
             no_manager_action = len(valid_actions) == 0
             penalty_delta = 0.0
-            n_invalid = len(env_input['actions']) - len(valid_actions)
-            if n_invalid > 0:
-                # proportional penalty: each invalid action costs format_penalty
-                penalty_delta = self.sys_config.es_manager.format_penalty * n_invalid
-            elif not valid_actions:
+            if len(valid_actions) != len(env_input['actions']) or not valid_actions:
                 penalty_delta = self.sys_config.es_manager.format_penalty
             if no_manager_action:
                 turn_info = dict(turn_info)
