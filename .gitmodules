@@ -3,7 +3,7 @@
 	url = https://github.com/volcengine/verl.git
 [submodule "external/webshop-minimal"]
 	path = external/webshop-minimal
-	url = git@github.com:ZihanWang314/webshop-minimal.git
+	url = https://github.com/ZihanWang314/webshop-minimal.git
 	branch = xjin-alignment
 [submodule "external/kimina-lean-server"]
 	path = external/kimina-lean-server
