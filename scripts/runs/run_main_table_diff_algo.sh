@@ -259,6 +259,11 @@ run_experiment() {
         "actor_rollout_ref.actor.entropy_from_logits_with_chunking=True"
         "actor_rollout_ref.actor.filter_loss_scaling=none"
         "actor_rollout_ref.rollout.gpu_memory_utilization=${GPU_MEMORY_UTILIZATION}"
+        "actor_rollout_ref.rollout.rollout_filter_strategy=${filter_strategy}"
+        "actor_rollout_ref.rollout.rollout_filter_top_p_prob_mode=softmax"
+        "actor_rollout_ref.rollout.rollout_filter_type=largest"
+        "actor_rollout_ref.rollout.rollout_filter_metric=reward_variance"
+        "actor_rollout_ref.rollout.rollout_filter_include_zero=True"
     )
 
     local env_overrides=()
@@ -297,7 +302,6 @@ run_experiment() {
         trainer.val_before_train=True \
         trainer.n_gpus_per_node="${gpus_per_exp}" \
         system.CUDA_VISIBLE_DEVICES="'${gpu_list}'" \
-        actor_rollout_ref.rollout.rollout_filter_strategy="${filter_strategy}" \
         actor_rollout_ref.rollout.rollout_filter_value="${filter_value}" \
         "${common_overrides[@]}" \
         "${env_overrides[@]}" \

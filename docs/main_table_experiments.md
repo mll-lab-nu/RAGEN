@@ -6,9 +6,9 @@ This doc covers the experiment scripts for the main performance table.
 
 | Script | Purpose | Variables |
 |--------|---------|-----------|
-| `run_main_table_diff_algo.sh` | Compare algorithms | PPO, DAPO, GRPO, DrGRPO |
-| `run_main_table_diff_size.sh` | Compare model sizes | 0.5B, 1.5B, 3B, 7B |
-| `run_main_table_diff_model.sh` | Compare model types | Instruct, Reasoning |
+| `run_main_table_diff_algo.sh` | Compare algorithms | PPO, DAPO, GRPO, DrGRPO; `filter`/`nofilter` |
+| `run_main_table_diff_size.sh` | Compare model sizes | 0.5B, 1.5B, 3B, 7B; `filter`/`nofilter` |
+| `run_main_table_diff_model.sh` | Compare model types | Instruct, Reasoning; `filter`/`nofilter` |
 
 All scripts run experiments across 5 tasks (sokoban, frozenlake, webshop, metamathqa, countdown) with filter/nofilter settings.
 
@@ -30,14 +30,12 @@ Options:
 - `--gpus-per-exp` (default: `1`)
 - `--cooldown` (seconds; default: `30`)
 - `--gpu-memory-utilization` (default: `0.3`)
+- `--filters` (comma list; `filter`, `nofilter`, or `all`; default: `all`)
 
 Examples:
 ```bash
-# Run only PPO and GRPO
-bash scripts/runs/run_main_table_diff_algo.sh --algos PPO,GRPO
-
-# Single task, quick sanity
-bash scripts/runs/run_main_table_diff_algo.sh --steps 5 --tasks sokoban --algos PPO
+# Run one `filter` and one `nofilter` PPO experiment on 4xH100 each
+bash scripts/runs/run_main_table_diff_algo.sh --steps 400 --tasks sokoban --gpus-per-exp 4 --gpu-memory-utilization 0.3 --filters all --gpus 0,1,2,3,4,5,6,7 --algos PPO
 ```
 
 Outputs:
@@ -62,11 +60,12 @@ Options:
 - `--gpus-per-exp` (default: `1`)
 - `--cooldown` (seconds; default: `30`)
 - `--gpu-memory-utilization` (default: `0.3`)
+- `--filters` (comma list; `filter`, `nofilter`, or `all`; default: `all`)
 
 Examples:
 ```bash
-# Run only 3B and 7B
-bash scripts/runs/run_main_table_diff_size.sh --models Qwen2.5-3B,Qwen2.5-7B
+# Run a single 1.5B/filter experiment on 4xH100
+bash scripts/runs/run_main_table_diff_size.sh --steps 400 --tasks sokoban --gpus-per-exp 4 --gpu-memory-utilization 0.3 --filters filter --gpus 0,1,2,3 --models Qwen2.5-1.5B
 
 # Quick test with smallest model
 bash scripts/runs/run_main_table_diff_size.sh --steps 5 --models Qwen2.5-0.5B --tasks sokoban
@@ -94,14 +93,12 @@ Options:
 - `--gpus-per-exp` (default: `1`)
 - `--cooldown` (seconds; default: `30`)
 - `--gpu-memory-utilization` (default: `0.3`)
+- `--filters` (comma list; `filter`, `nofilter`, or `all`; default: `all`)
 
 Examples:
 ```bash
-# Run with specific models
-bash scripts/runs/run_main_table_diff_model.sh --models Qwen2.5-3B-Instruct
-
-# Quick test
-bash scripts/runs/run_main_table_diff_model.sh --steps 5 --tasks sokoban
+# Run one `filter` and one `nofilter` Llama-3.2-3B-Instruct experiment on 4xH100 each
+bash scripts/runs/run_main_table_diff_model.sh --steps 400 --tasks sokoban --gpus-per-exp 4 --gpu-memory-utilization 0.5 --filters all --gpus 0,1,2,3,4,5,6,7 --models=meta-llama/Llama-3.2-3B-Instruct
 ```
 
 Outputs:
@@ -112,6 +109,14 @@ Outputs:
 
 ## Common Notes
 
-- Filter settings: `filter` uses `top_p=0.9`, `nofilter` uses `top_p=1.0`
-- All experiments log to wandb with project names like `ragen_multi_gpu_test`, `ragen_model_size`, `ragen_model_type`
-- Use `--gpus-per-exp` for multi-GPU experiments (GPU count must be divisible by this value)
+- Effective rollout filter config for main-table runs:
+  - `rollout_filter_strategy=top_p`
+  - `rollout_filter_top_p_prob_mode=softmax`
+  - `rollout_filter_type=largest`
+  - `rollout_filter_metric=reward_variance`
+  - `rollout_filter_include_zero=True`
+- Filter mode mapping:
+  - `filter`: `top_p=0.9`, `include_zero=True`
+  - `nofilter`: `top_p=1.0`, `include_zero=True`
+- Because `include_zero=True`, `nofilter` (`top_p=1.0`) keeps all groups; it does not disable the filter code path, but it is effectively "no filtering" for the batch
+- You can run a single experiment on `4xH100` by setting `--gpus-per-exp 4` and passing a 4-GPU list, or run one `filter` and one `nofilter` experiment in parallel by passing an 8-GPU list
