@@ -92,7 +92,6 @@ if [ "$NUM_GPUS" -lt 1 ]; then
     exit 1
 fi
 
-ANALYSIS_EVERY=$((STEPS + 1))
 EXP_NAME="${TASK}-${ALGO}-${FILTER_LABEL}-topp09-${MODEL_NAME}-grad-step1"
 LOG_DIR="logs/gradient_analysis_${TASK}_${MODEL_NAME}"
 CHECKPOINT_DIR="model_saving/gradient_analysis/${TASK}/${ALGO}/${FILTER_LABEL}/${EXP_NAME}"
@@ -103,7 +102,7 @@ mkdir -p "$CHECKPOINT_DIR"
 
 echo "=== Gradient Analysis Runner: $(date) ===" | tee "$LOG_PATH"
 echo "task=${TASK} algo=${ALGO} filter=top_p:${FILTER_VALUE} model=${MODEL_NAME} steps=${STEPS} gpus=${GPU_LIST}" | tee -a "$LOG_PATH"
-echo "group_size=${GROUP_SIZE} env_groups=${ENV_GROUPS} gradient_analysis_every=${ANALYSIS_EVERY}" | tee -a "$LOG_PATH"
+echo "group_size=${GROUP_SIZE} env_groups=${ENV_GROUPS} gradient_analysis_every=1 exit_after_gradient_analysis=True" | tee -a "$LOG_PATH"
 
 CUDA_VISIBLE_DEVICES="${GPU_LIST}" python train.py --config-name "${CONFIG_NAME}" \
     model_path="${MODEL_PATH}" \
@@ -139,7 +138,8 @@ CUDA_VISIBLE_DEVICES="${GPU_LIST}" python train.py --config-name "${CONFIG_NAME}
     critic.checkpoint.save_contents=[model] \
     algorithm.adv_estimator=gae \
     +trainer.gradient_analysis_mode=True \
-    +trainer.gradient_analysis_every="${ANALYSIS_EVERY}" \
+    +trainer.gradient_analysis_every=1 \
+    +trainer.exit_after_gradient_analysis=True \
     +actor_rollout_ref.rollout.gradient_analysis_num_buckets=6 \
     +actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile \
     2>&1 | tee -a "$LOG_PATH"

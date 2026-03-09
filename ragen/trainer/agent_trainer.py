@@ -1006,6 +1006,12 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                         if (self.global_steps - 1) % gradient_analysis_every == 0:
                             with marked_timer("gradient_analysis", timing_raw):
                                 run_gradient_analysis(self, batch, metrics)
+                            if self.config.trainer.get("exit_after_gradient_analysis", False):
+                                metrics["trainer/exited_after_gradient_analysis"] = 1.0
+                                logger.log(data=metrics, step=self.global_steps)
+                                _finish_logger()
+                                progress_bar.close()
+                                return
 
                     # update actor
                     with marked_timer("update_actor", timing_raw):

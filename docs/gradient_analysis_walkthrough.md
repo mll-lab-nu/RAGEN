@@ -57,11 +57,14 @@ Run the analysis using the following flags:
 python3 train.py ... +trainer.gradient_analysis_mode=True +trainer.gradient_analysis_every=10
 ```
 Optional flags:
+- `+trainer.exit_after_gradient_analysis=True`
 - `+actor_rollout_ref.rollout.gradient_analysis_num_buckets=6`
 - `+actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile|fixed_rv`
 
 `gradient_analysis_every` controls the reporting cadence (default: off). Reporting runs on steps where `(global_steps - 1) % gradient_analysis_every == 0` (i.e., it triggers at step 1).
 Metrics will be logged to WandB and the console under `grad_norm/<bucket>/`.
+
+`exit_after_gradient_analysis=True` turns the run into an analysis-only probe: after the selected gradient-analysis step finishes, the trainer logs the analysis metrics and exits immediately before the actor update, checkpoint save, or post-step validation. This is intended for checkpoint inspection. If `val_before_train=True`, the initial validation still runs before the analysis step.
 
 Component metrics are logged per bucket:
 - `grad_norm/<bucket>/task`
