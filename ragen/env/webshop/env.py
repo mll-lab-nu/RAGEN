@@ -115,13 +115,14 @@ class WebShopEnv(BaseLanguageBasedEnv, WebAgentTextEnv):
         """
         action_is_valid = action in self.get_available_actions() or ("search[<content>]" in self.get_available_actions() and action.startswith('search[') and action.endswith(']'))
         last_observation = self.observation
-        state, reward, done, info = WebAgentTextEnv.step(self, action)
+        state, raw_reward, done, info = WebAgentTextEnv.step(self, action)
+        reward = 1.0 if raw_reward >= 1.0 else 0.0
         self.prepare_render_cache(self.observation)
             
         info = (info or {}).copy()
         info.update({
             "reward": reward,
-            "raw_reward": reward,
+            "raw_reward": raw_reward,
             "action_is_effective": self.observation != last_observation,
             "action_is_valid": action_is_valid,
             "success": 1 if reward == 1 else 0,
