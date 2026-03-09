@@ -315,7 +315,7 @@ run_experiment() {
     CUDA_VISIBLE_DEVICES="${gpu_list}" python train.py --config-name "$config" \
         model_path="${model_path}" \
         micro_batch_size_per_gpu=1 \
-        agent_proxy.max_turn=12 \
+        agent_proxy.max_turn=9 \
         trainer.project_name="main_webshop" \
         trainer.total_training_steps="${STEPS}" \
         trainer.experiment_name="${name}" \
