@@ -3,7 +3,7 @@
 ## Overview
 This document details the advanced filtering strategies and the loss scaling mechanism implemented to stabilize Reinforcement Learning (RL) training, particularly when using aggressive filtering techniques in the GRPO/PPO loop.
 
-Note: the detailed `top_p` behavior has evolved beyond the original softmax-only implementation. For the current `softmax` plus `linear` RV-mass variants and parameter guidance, see [docs/top_p_filtering.md](/work/hdd/bfea/cgui/RAGEN/docs/top_p_filtering.md).
+Note: the short guide for the current `top_p`, `top_k`, and no-filter variants lives in [docs/rollout_filtering.md](./rollout_filtering.md).
 
 ## 1. Rolling Filter Strategies (`rollout_filter_strategy`)
 We have implemented three strategies to filter rollout groups based on their rewards/scores.
