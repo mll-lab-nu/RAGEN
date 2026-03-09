@@ -508,6 +508,7 @@ class RewardRolloutFilter(RolloutFilter):
 
         buckets_masks = {"all": torch.ones_like(reward_std, dtype=torch.bool)}
         bucket_group_masks = {"all": torch.ones(num_groups, dtype=torch.bool, device=reward_std.device)}
+        bucket_group_indices = {"all": torch.arange(num_groups, device=reward_std.device)}
 
         if self.bucket_mode == "fixed_rv":
             # Fixed RV gaps: [0,1), [1,2), [2,3), [3,4), [4,5), [5, +inf)
@@ -525,6 +526,7 @@ class RewardRolloutFilter(RolloutFilter):
                     sample_mask = group_mask.unsqueeze(1).expand(-1, group_size).reshape(-1)
                 buckets_masks[name] = sample_mask
                 bucket_group_masks[name] = group_mask
+                bucket_group_indices[name] = torch.where(group_mask)[0]
         else:
             # Equal-percentage buckets (by groups). Remainder is assigned to the last bucket.
             num_buckets = self.bucket_count
@@ -552,6 +554,7 @@ class RewardRolloutFilter(RolloutFilter):
                     sample_mask = group_mask.unsqueeze(1).expand(-1, group_size).reshape(-1)
                 buckets_masks[name] = sample_mask
                 bucket_group_masks[name] = group_mask
+                bucket_group_indices[name] = group_ids
                 start = end
 
         result = {}
@@ -567,10 +570,7 @@ class RewardRolloutFilter(RolloutFilter):
                 percentage = (count / total_samples) * 100
                 group_mask = bucket_group_masks[name]
                 avg_std = reward_std_per_group[group_mask].mean().item()
-                if self.bucket_mode == "fixed_rv":
-                    group_ids_for_bucket = torch.where(group_mask)[0]
-                else:
-                    group_ids_for_bucket = group_ids
+                group_ids_for_bucket = bucket_group_indices[name]
                 bucket_rv_values = reward_std_per_group[group_ids_for_bucket].detach().cpu().tolist()
                 if batch.non_tensor_batch is not None and "group_ids" in batch.non_tensor_batch:
                     bucket_group_ids = unique_group_ids[group_ids_for_bucket].detach().cpu().tolist()
