@@ -1,6 +1,7 @@
 from ragen.env.base import BaseLanguageBasedEnv
 from ragen.env.webshop.config import WebShopEnvConfig
 from webshop_minimal import WebAgentTextEnv, init_basedir
+from webshop_minimal.engine import parse_action
 from typing import Optional, Union
 from ragen.utils import all_seed
 import random
@@ -113,7 +114,20 @@ class WebShopEnv(BaseLanguageBasedEnv, WebAgentTextEnv):
         """
         Take an action in the environment and return the next observation, reward, done, and info.
         """
-        action_is_valid = action in self.get_available_actions() or ("search[<content>]" in self.get_available_actions() and action.startswith('search[') and action.endswith(']'))
+        orig_available_actions = WebAgentTextEnv.get_available_actions(self)
+        action_name, action_arg = parse_action(action)
+        if action_arg is not None:
+            action_arg = action_arg.lower()
+        action_is_valid = (
+            action_name == "search"
+            and orig_available_actions["has_search_bar"]
+            and action_arg is not None
+            and action_arg != ""
+        ) or (
+            action_name == "click"
+            and action_arg in orig_available_actions["clickables"]
+            and action_arg != "search"
+        )
         last_observation = self.observation
         state, raw_reward, done, info = WebAgentTextEnv.step(self, action)
         reward = 1.0 if raw_reward >= 1.0 else 0.0
