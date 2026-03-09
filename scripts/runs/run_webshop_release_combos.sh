@@ -14,8 +14,8 @@ STEPS=100
 TASK="webshop-release"
 CONFIG="_6_webshop"
 SAVE_FREQ=100
-NUM_GROUPS=8
-GROUP_SIZE=16
+NUM_GROUPS=16
+GROUP_SIZE=8
 MODEL_NAME="Qwen2.5-3B-Instruct"
 ALGO="GRPO"
 FILTER_MODES=("topk25" "topp09" "nofilter")
@@ -326,13 +326,13 @@ run_experiment() {
         trainer.n_gpus_per_node="${gpus_per_exp}" \
         system.CUDA_VISIBLE_DEVICES="'${gpu_list}'" \
         actor_rollout_ref.rollout.rollout_filter_value="${filter_value}" \
-        ppo_mini_batch_size=16 \
+        ppo_mini_batch_size=32 \
         es_manager.train.env_groups=${NUM_GROUPS} \
         es_manager.train.group_size=${GROUP_SIZE} \
         es_manager.train.env_configs.n_groups="[${NUM_GROUPS}]" \
-        es_manager.val.env_groups=128 \
+        es_manager.val.env_groups=256 \
         es_manager.val.group_size=1 \
-        es_manager.val.env_configs.n_groups="[128]" \
+        es_manager.val.env_configs.n_groups="[256]" \
         "${common_overrides[@]}" \
         "${env_overrides[@]}" \
         "${checkpoint_overrides[@]}" \
