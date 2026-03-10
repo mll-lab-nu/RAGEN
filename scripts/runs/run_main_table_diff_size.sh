@@ -20,6 +20,7 @@ GPUS_PROVIDED=false
 GPUS_PER_EXP=1
 COOLDOWN_SECONDS=30
 GPU_MEMORY_UTILIZATION=0.3
+RAY_NUM_CPUS=16
 declare -A GPU_LABELS
 
 usage() {
@@ -32,6 +33,7 @@ usage() {
     echo "  --gpus-per-exp N      GPUs per experiment (default: 1)"
     echo "  --cooldown SECONDS    Cooldown between runs on the same GPU group (default: 30)"
     echo "  --gpu-memory-utilization V  Rollout gpu_memory_utilization (default: 0.3)"
+    echo "  --ray-num-cpus N      Max CPUs per task for ray.init (default: 16)"
     echo "  --save-freq N         Checkpoint save frequency (default: -1 to disable saving)"
     echo "  --filters LIST        Comma-separated filter modes (filter,nofilter,all). Default: all"
     echo "  -h, --help            Show this help"
@@ -54,6 +56,8 @@ while [ $# -gt 0 ]; do
         --cooldown=*) COOLDOWN_SECONDS="${1#*=}"; shift ;;
         --gpu-memory-utilization) GPU_MEMORY_UTILIZATION="$2"; shift 2 ;;
         --gpu-memory-utilization=*) GPU_MEMORY_UTILIZATION="${1#*=}"; shift ;;
+        --ray-num-cpus) RAY_NUM_CPUS="$2"; shift 2 ;;
+        --ray-num-cpus=*) RAY_NUM_CPUS="${1#*=}"; shift ;;
         --save-freq) SAVE_FREQ="$2"; shift 2 ;;
         --save-freq=*) SAVE_FREQ="${1#*=}"; shift ;;
         --filters) FILTERS_OPTION="$2"; shift 2 ;;
@@ -89,6 +93,10 @@ if (( ${#GPUS[@]} < GPUS_PER_EXP )); then
 fi
 if (( ${#GPUS[@]} % GPUS_PER_EXP != 0 )); then
     echo "Error: GPU count (${#GPUS[@]}) must be divisible by --gpus-per-exp (${GPUS_PER_EXP})"
+    exit 1
+fi
+if ! [[ "$RAY_NUM_CPUS" =~ ^[0-9]+$ ]] || [ "$RAY_NUM_CPUS" -lt 1 ]; then
+    echo "Error: --ray-num-cpus must be a positive integer"
     exit 1
 fi
 
@@ -279,6 +287,7 @@ run_experiment() {
         trainer.logger="['console','wandb']" \
         trainer.val_before_train=True \
         trainer.n_gpus_per_node="${gpus_per_exp}" \
+        ray_kwargs.ray_init.num_cpus="${RAY_NUM_CPUS}" \
         system.CUDA_VISIBLE_DEVICES="'${gpu_list}'" \
         actor_rollout_ref.rollout.rollout_filter_value="${filter_value}" \
         "${common_overrides[@]}" \

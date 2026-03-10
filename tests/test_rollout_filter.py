@@ -27,6 +27,7 @@ from ragen.trainer.rollout_filter import (
     RolloutFilterConfig,
     RewardRolloutFilter,
     EntropyRolloutFilter,
+    build_rollout_filter,
 )
 
 
@@ -152,6 +153,64 @@ def test_reward_metric_selects_high_mean_group():
     # Highest mean group is the first one, so we expect its entries to remain.
     retained = filtered_batch.batch["original_rm_scores"].squeeze(-1)
     assert torch.allclose(retained, torch.tensor([10.0, 11.0]))
+
+
+def test_reward_sum_metric_keeps_top_half_groups():
+    num_groups, group_size, traj_len = 4, 2, 2
+    batch = _make_reward_batch(num_groups, group_size, traj_len)
+
+    batch.batch["original_rm_scores"] = torch.tensor(
+        [
+            [3.0, 2.0],
+            [1.0, 4.0],
+            [2.0, 1.0],
+            [1.0, 2.0],
+            [2.0, 2.0],
+            [1.0, 2.0],
+            [0.0, 1.0],
+            [0.0, 0.0],
+        ]
+    )
+
+    rollout_filter = RewardRolloutFilter(
+        RolloutFilterConfig(
+            value=0.5,
+            filter_type="largest",
+            num_groups=num_groups,
+            group_size=group_size,
+            metric="reward_sum",
+            strategy="top_k",
+        )
+    )
+
+    filtered_batch, metrics = rollout_filter.filter(batch)
+
+    retained = filtered_batch.batch["original_rm_scores"]
+    expected = torch.tensor(
+        [
+            [3.0, 2.0],
+            [1.0, 4.0],
+            [2.0, 2.0],
+            [1.0, 2.0],
+        ]
+    )
+    assert torch.allclose(retained, expected)
+    assert metrics["rollout/in_group_reward_sum"].item() == pytest.approx(6.0)
+    assert metrics["rollout/chosen_in_group_reward_sum"].item() == pytest.approx(8.5)
+
+
+def test_build_rollout_filter_supports_reward_sum():
+    rollout_filter = build_rollout_filter(
+        value=0.5,
+        filter_type="largest",
+        num_groups=4,
+        group_size=2,
+        metric="reward_sum",
+        strategy="top_k",
+    )
+
+    assert isinstance(rollout_filter, RewardRolloutFilter)
+    assert rollout_filter.config.metric == "reward_sum"
 
 
 def test_top_p_softmax_mode_preserves_previous_behavior():

@@ -1,7 +1,8 @@
 #!/bin/bash
-# Main Table: Different algorithms (PPO/DAPO/GRPO/DrGRPO) × tasks × filter/no-filter
+# Main Table: Different algorithms (PPO/DAPO/GRPO/DrGRPO) × tasks × filter variants
 # Model: Qwen2.5-3B only
-# Filtering rule: filter => top_p=0.9, nofilter => top_p=1.0
+# Filtering rule: filter => top_p=0.9 reward_variance, nofilter => top_p=1.0 reward_variance,
+# RewardSumFilter => top_k=0.5 reward_sum
 
 set -euo pipefail
 
@@ -12,7 +13,9 @@ TASKS=("sokoban" "frozenlake" "webshop" "metamathqa" "countdown")
 ALGORITHMS=("PPO" "DAPO" "GRPO" "DrGRPO")
 MODEL_PATH=""
 SAVE_FREQ=-1
-FILTER_MODES=("filter" "nofilter")
+PPO_MICRO_BATCH_SIZE_PER_GPU=4
+LOG_PROB_MICRO_BATCH_SIZE_PER_GPU=4
+FILTER_MODES=("filter" "nofilter" "RewardSumFilter")
 FILTERS_OPTION="all"
 SELECTED_FILTERS=("${FILTER_MODES[@]}")
 
@@ -37,7 +40,9 @@ usage() {
     echo "  --gpu-memory-utilization V  Rollout gpu_memory_utilization (default: 0.3)"
     echo "  --ray-num-cpus N      Max CPUs per task for ray.init (default: 16)"
     echo "  --save-freq N         Checkpoint save frequency (default: -1 to disable saving)"
-    echo "  --filters LIST        Comma-separated filter modes (filter,nofilter,all). Default: all"
+    echo "  --ppo-micro-batch-size-per-gpu N      PPO micro batch size per GPU for actor/critic (default: 4)"
+    echo "  --log-prob-micro-batch-size-per-gpu N log-prob micro batch size per GPU for ref/rollout (default: 4)"
+    echo "  --filters LIST        Comma-separated filter modes (filter,nofilter,RewardSumFilter,all). Default: all"
     echo "  -h, --help            Show this help"
     exit 0
 }
@@ -62,6 +67,10 @@ while [ $# -gt 0 ]; do
         --ray-num-cpus=*) RAY_NUM_CPUS="${1#*=}"; shift ;;
         --save-freq) SAVE_FREQ="$2"; shift 2 ;;
         --save-freq=*) SAVE_FREQ="${1#*=}"; shift ;;
+        --ppo-micro-batch-size-per-gpu) PPO_MICRO_BATCH_SIZE_PER_GPU="$2"; shift 2 ;;
+        --ppo-micro-batch-size-per-gpu=*) PPO_MICRO_BATCH_SIZE_PER_GPU="${1#*=}"; shift ;;
+        --log-prob-micro-batch-size-per-gpu) LOG_PROB_MICRO_BATCH_SIZE_PER_GPU="$2"; shift 2 ;;
+        --log-prob-micro-batch-size-per-gpu=*) LOG_PROB_MICRO_BATCH_SIZE_PER_GPU="${1#*=}"; shift ;;
         --filters) FILTERS_OPTION="$2"; shift 2 ;;
         --filters=*) FILTERS_OPTION="${1#*=}"; shift ;;
         -h|--help) usage ;;
@@ -101,6 +110,14 @@ if (( ${#GPUS[@]} % GPUS_PER_EXP != 0 )); then
 fi
 if ! [[ "$RAY_NUM_CPUS" =~ ^[0-9]+$ ]] || [ "$RAY_NUM_CPUS" -lt 1 ]; then
     echo "Error: --ray-num-cpus must be a positive integer"
+    exit 1
+fi
+if ! [[ "$PPO_MICRO_BATCH_SIZE_PER_GPU" =~ ^[0-9]+$ ]] || [ "$PPO_MICRO_BATCH_SIZE_PER_GPU" -lt 1 ]; then
+    echo "Error: --ppo-micro-batch-size-per-gpu must be a positive integer"
+    exit 1
+fi
+if ! [[ "$LOG_PROB_MICRO_BATCH_SIZE_PER_GPU" =~ ^[0-9]+$ ]] || [ "$LOG_PROB_MICRO_BATCH_SIZE_PER_GPU" -lt 1 ]; then
+    echo "Error: --log-prob-micro-batch-size-per-gpu must be a positive integer"
     exit 1
 fi
 
@@ -210,6 +227,7 @@ mkdir -p "$CHECKPOINT_ROOT"
 
 echo "=== Perf Table Runner for ${MODEL_NAME}: $(date) ===" | tee "$LOG_FILE"
 echo "Tasks: ${TASKS[*]} | Steps: ${STEPS} | GPU per exp: ${GPUS_PER_EXP}x${GPU_MODEL_LABEL}" | tee -a "$LOG_FILE"
+echo "PPO micro batch/GPU: ${PPO_MICRO_BATCH_SIZE_PER_GPU} | Log-prob micro batch/GPU: ${LOG_PROB_MICRO_BATCH_SIZE_PER_GPU}" | tee -a "$LOG_FILE"
 echo "GPUS: ${GPUS[*]} | groups: ${GPU_GROUPS[*]} | cooldown=${COOLDOWN_SECONDS}s" | tee -a "$LOG_FILE"
 
 get_config_for_task() {
@@ -252,12 +270,30 @@ run_experiment() {
     local gpu_list=$5
 
     local filter_value
-    if [ "$filter" = "filter" ]; then
-        filter_value=0.9
-    else
-        filter_value=1.0
-    fi
-    local filter_strategy="top_p"
+    local filter_strategy
+    local filter_metric
+    local filter_top_p_prob_mode="softmax"
+    case "$filter" in
+        filter)
+            filter_value=0.9
+            filter_strategy="top_p"
+            filter_metric="reward_variance"
+            ;;
+        nofilter)
+            filter_value=1.0
+            filter_strategy="top_p"
+            filter_metric="reward_variance"
+            ;;
+        RewardSumFilter)
+            filter_value=0.5
+            filter_strategy="top_k"
+            filter_metric="reward_sum"
+            ;;
+        *)
+            echo "Unknown filter mode: $filter" >&2
+            return 1
+            ;;
+    esac
 
     local common_overrides=(
         "actor_rollout_ref.actor.use_kl_loss=False"
@@ -266,11 +302,15 @@ run_experiment() {
         "actor_rollout_ref.actor.entropy_coeff=0.001"
         "actor_rollout_ref.actor.entropy_from_logits_with_chunking=True"
         "actor_rollout_ref.actor.filter_loss_scaling=none"
+        "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=${PPO_MICRO_BATCH_SIZE_PER_GPU}"
+        "critic.ppo_micro_batch_size_per_gpu=${PPO_MICRO_BATCH_SIZE_PER_GPU}"
+        "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=${LOG_PROB_MICRO_BATCH_SIZE_PER_GPU}"
+        "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=${LOG_PROB_MICRO_BATCH_SIZE_PER_GPU}"
         "actor_rollout_ref.rollout.gpu_memory_utilization=${GPU_MEMORY_UTILIZATION}"
         "actor_rollout_ref.rollout.rollout_filter_strategy=${filter_strategy}"
-        "actor_rollout_ref.rollout.rollout_filter_top_p_prob_mode=softmax"
+        "actor_rollout_ref.rollout.rollout_filter_top_p_prob_mode=${filter_top_p_prob_mode}"
         "actor_rollout_ref.rollout.rollout_filter_type=largest"
-        "actor_rollout_ref.rollout.rollout_filter_metric=reward_variance"
+        "actor_rollout_ref.rollout.rollout_filter_metric=${filter_metric}"
         "actor_rollout_ref.rollout.rollout_filter_include_zero=True"
     )
 
@@ -301,7 +341,7 @@ run_experiment() {
     START=$(date +%s)
     CUDA_VISIBLE_DEVICES="${gpu_list}" python train.py --config-name "$config" \
         model_path="${MODEL_PATH}" \
-        trainer.project_name="ragen_main_table_diff_algo" \
+        trainer.project_name="ragen_release_reward_filter" \
         trainer.total_training_steps="${STEPS}" \
         trainer.experiment_name="${name}" \
         trainer.save_freq="${SAVE_FREQ}" \
@@ -363,7 +403,7 @@ PY
 
     local gpu_label
     gpu_label=$(get_gpu_label_for_list "$gpu_list")
-    local summary_line="task=${task} | algo=${algo} | filter=${filter} | model=${MODEL_NAME} | steps=${STEPS} | filter=${filter_strategy}:${filter_value} | train_time=${TRAIN_TIME}s | eval_time=${EVAL_TIME}s | total_time=${TOTAL_TIME_METRIC}s | wall_time=${TOTAL_TIME}s | gpu=${gpu_label} | status=${status}"
+    local summary_line="task=${task} | algo=${algo} | filter=${filter} | model=${MODEL_NAME} | steps=${STEPS} | filter=${filter_strategy}:${filter_value}:${filter_metric} | ppo_micro=${PPO_MICRO_BATCH_SIZE_PER_GPU} | log_prob_micro=${LOG_PROB_MICRO_BATCH_SIZE_PER_GPU} | train_time=${TRAIN_TIME}s | eval_time=${EVAL_TIME}s | total_time=${TOTAL_TIME_METRIC}s | wall_time=${TOTAL_TIME}s | gpu=${gpu_label} | status=${status}"
     echo "${summary_line}" > "${task_dir}/${name}.result"
     echo "${summary_line}" | tee -a "$LOG_FILE"
     if [ "$status" = "fail" ]; then
@@ -400,8 +440,11 @@ resolve_filter_selection() {
     for candidate in "${candidates[@]}"; do
         candidate="${candidate// /}"
         case "$candidate" in
-            filter|nofilter)
+            filter|nofilter|RewardSumFilter)
                 SELECTED_FILTERS+=("$candidate")
+                ;;
+            rewardsumfilter)
+                SELECTED_FILTERS+=("RewardSumFilter")
                 ;;
             "")
                 continue

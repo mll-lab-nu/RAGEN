@@ -18,9 +18,8 @@ STEPS=200
 MODEL_NAMES=("Qwen2.5-3B-Instruct")
 ALGORITHMS=("PPO")
 SAVE_FREQ=-1
-FILTER_MODES=("filter" "nofilter")
-FILTERS_OPTION="all"
-SELECTED_FILTERS=("${FILTER_MODES[@]}")
+FILTER_STRATEGY="top_p"
+FILTER_VALUE=""
 
 # GPU settings
 GPUS=()
@@ -51,7 +50,8 @@ usage() {
     echo "  --collapse-freq N     collapse_detection.compute_freq override"
     echo "  --save-freq N         Checkpoint save frequency (default: -1 to disable saving)"
     echo "  --retrieval-port N    Retrieval server port (overrides default 8000 in config)"
-    echo "  --filters LIST        Comma-separated filter modes (filter,nofilter,all). Default: all"
+    echo "  --filter-strategy S   Rollout filter strategy: top_p, top_k, etc. (default: top_p)"
+    echo "  --filter-value V     Rollout filter value (default: 1.0 for no filtering)"
     echo "  -h, --help            Show this help"
     exit 0
 }
@@ -84,12 +84,26 @@ while [ $# -gt 0 ]; do
         --collapse-freq=*) COLLAPSE_FREQ="${1#*=}"; shift ;;
         --retrieval-port) RETRIEVAL_PORT="$2"; shift 2 ;;
         --retrieval-port=*) RETRIEVAL_PORT="${1#*=}"; shift ;;
-        --filters) FILTERS_OPTION="$2"; shift 2 ;;
-        --filters=*) FILTERS_OPTION="${1#*=}"; shift ;;
+        --filter-strategy) FILTER_STRATEGY="$2"; shift 2 ;;
+        --filter-strategy=*) FILTER_STRATEGY="${1#*=}"; shift ;;
+        --filter-value) FILTER_VALUE="$2"; shift 2 ;;
+        --filter-value=*) FILTER_VALUE="${1#*=}"; shift ;;
         -h|--help) usage ;;
         *) echo "Unknown argument: $1"; usage ;;
     esac
 done
+
+# Default filter value: 1.0 (no filtering) if not specified
+if [ -z "$FILTER_VALUE" ]; then
+    FILTER_VALUE=1.0
+fi
+
+# Derive a short filter label for experiment naming / logs
+if [ "$FILTER_VALUE" = "1.0" ] || [ "$FILTER_VALUE" = "1" ]; then
+    FILTER_LABEL="nofilter"
+else
+    FILTER_LABEL="${FILTER_STRATEGY}${FILTER_VALUE}"
+fi
 
 # Fixed: search task config
 CONFIG="_10_search"
@@ -259,25 +273,19 @@ mkdir -p "$RESULT_ROOT"
 mkdir -p "$CHECKPOINT_ROOT"
 
 echo "=== Search Benchmark Runner: $(date) ===" | tee "$LOG_FILE"
-echo "Models: ${MODEL_NAMES[*]} | Algos: ${ALGORITHMS[*]} | Steps: ${STEPS} | GPU per exp: ${GPUS_PER_EXP}x${GPU_MODEL_LABEL}" | tee -a "$LOG_FILE"
+echo "Models: ${MODEL_NAMES[*]} | Algos: ${ALGORITHMS[*]} | Filter: ${FILTER_STRATEGY}:${FILTER_VALUE} | Steps: ${STEPS} | GPU per exp: ${GPUS_PER_EXP}x${GPU_MODEL_LABEL}" | tee -a "$LOG_FILE"
 echo "GPUS: ${GPUS[*]} | groups: ${GPU_GROUPS[*]} | cooldown=${COOLDOWN_SECONDS}s" | tee -a "$LOG_FILE"
 
 run_experiment() {
     local model_name=$1
     local algo=$2
-    local filter=$3
-    local gpu_list=$4
+    local gpu_list=$3
 
     local model_path
     model_path=$(get_model_path "$model_name")
 
-    local filter_value
-    if [ "$filter" = "filter" ]; then
-        filter_value=0.9
-    else
-        filter_value=1.0
-    fi
-    local filter_strategy="top_p"
+    local filter_strategy="$FILTER_STRATEGY"
+    local filter_value="$FILTER_VALUE"
 
     local common_overrides=(
         "actor_rollout_ref.actor.use_kl_loss=False"
@@ -314,9 +322,9 @@ run_experiment() {
     algo_overrides=$(get_algo_overrides "$algo")
     read -r -a algo_args <<< "$algo_overrides"
 
-    local name="search-${algo}-${filter}-${model_name}"
+    local name="search-${algo}-${FILTER_LABEL}-${model_name}"
     local log_path="${LOG_DIR}/${name}.log"
-    local checkpoint_dir="${CHECKPOINT_ROOT}/${model_name}/${algo}/${filter}/${name}"
+    local checkpoint_dir="${CHECKPOINT_ROOT}/${model_name}/${algo}/${FILTER_LABEL}/${name}"
     local gpus_per_exp
     IFS=',' read -r -a gpu_ids <<< "$gpu_list"
     gpus_per_exp=${#gpu_ids[@]}
@@ -391,7 +399,7 @@ PY
 
     local gpu_label
     gpu_label=$(get_gpu_label_for_list "$gpu_list")
-    local summary_line="task=search | algo=${algo} | filter=${filter} | model=${model_name} | steps=${STEPS} | filter=${filter_strategy}:${filter_value} | train_time=${TRAIN_TIME}s | eval_time=${EVAL_TIME}s | total_time=${TOTAL_TIME_METRIC}s | wall_time=${TOTAL_TIME}s | gpu=${gpu_label} | status=${status}"
+    local summary_line="task=search | algo=${algo} | filter=${FILTER_LABEL} | model=${model_name} | steps=${STEPS} | strategy=${filter_strategy}:${filter_value} | train_time=${TRAIN_TIME}s | eval_time=${EVAL_TIME}s | total_time=${TOTAL_TIME_METRIC}s | wall_time=${TOTAL_TIME}s | gpu=${gpu_label} | status=${status}"
     echo "${summary_line}" > "${LOG_DIR}/${name}.result"
     echo "${summary_line}" | tee -a "$LOG_FILE"
     if [ "$status" = "fail" ]; then
@@ -404,35 +412,6 @@ EXPERIMENTS=()
 GROUP_LABELS=()
 CURRENT_GROUP=""
 
-resolve_filter_selection() {
-    local raw="$1"
-    if [ -z "$raw" ] || [ "$raw" = "all" ]; then
-        SELECTED_FILTERS=("${FILTER_MODES[@]}")
-        return
-    fi
-    IFS=',' read -r -a candidates <<< "$raw"
-    SELECTED_FILTERS=()
-    for candidate in "${candidates[@]}"; do
-        candidate="${candidate// /}"
-        case "$candidate" in
-            filter|nofilter)
-                SELECTED_FILTERS+=("$candidate")
-                ;;
-            "")
-                continue
-                ;;
-            *)
-                echo "Unknown filter mode: $candidate" >&2
-                exit 1
-                ;;
-        esac
-    done
-    if [ ${#SELECTED_FILTERS[@]} -eq 0 ]; then
-        echo "No valid filters selected via --filters" >&2
-        exit 1
-    fi
-}
-
 set_group() {
     CURRENT_GROUP="$1"
     GROUP_LABELS+=("$1")
@@ -441,19 +420,14 @@ set_group() {
 add_experiment() {
     local model_name=$1
     local algo=$2
-    local filter=$3
-    EXPERIMENTS+=("${CURRENT_GROUP}|${model_name}|${algo}|${filter}")
+    EXPERIMENTS+=("${CURRENT_GROUP}|${model_name}|${algo}")
 }
 
-resolve_filter_selection "$FILTERS_OPTION"
-
-# Build experiment list: models × algos × filters
+# Build experiment list: models × algos (filter is a global setting)
 for model_name in "${MODEL_NAMES[@]}"; do
     for algo in "${ALGORITHMS[@]}"; do
         set_group "${model_name} / ${algo}"
-        for filter in "${SELECTED_FILTERS[@]}"; do
-            add_experiment "$model_name" "$algo" "$filter"
-        done
+        add_experiment "$model_name" "$algo"
     done
 done
 
@@ -525,8 +499,8 @@ run_queue_for_slot() {
             break
         fi
         local exp="${EXPERIMENTS[$idx]}"
-        IFS='|' read -r exp_group model_name algo filter <<< "$exp"
-        run_experiment "$model_name" "$algo" "$filter" "$gpu_list" || true
+        IFS='|' read -r exp_group model_name algo <<< "$exp"
+        run_experiment "$model_name" "$algo" "$gpu_list" || true
         if [ "$COOLDOWN_SECONDS" -gt 0 ]; then
             sleep "$COOLDOWN_SECONDS"
         fi
@@ -553,15 +527,15 @@ done
     for group_label in "${GROUP_LABELS[@]}"; do
         echo "=== ${group_label} ==="
         for exp in "${EXPERIMENTS[@]}"; do
-            IFS='|' read -r exp_group model_name algo filter <<< "$exp"
+            IFS='|' read -r exp_group model_name algo <<< "$exp"
             if [ "$exp_group" != "$group_label" ]; then
                 continue
             fi
-            name="search-${algo}-${filter}-${model_name}"
+            name="search-${algo}-${FILTER_LABEL}-${model_name}"
             if [ -f "${LOG_DIR}/${name}.result" ]; then
                 cat "${LOG_DIR}/${name}.result"
             else
-                echo "task=search | algo=${algo} | filter=${filter} | model=${model_name} | status=missing"
+                echo "task=search | algo=${algo} | filter=${FILTER_LABEL} | model=${model_name} | status=missing"
             fi
         done
     done

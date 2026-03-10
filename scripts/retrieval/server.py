@@ -9,9 +9,11 @@ Usage:
 
 import argparse
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
+import torch
 import faiss
 from flask import Flask, jsonify, request
 from sentence_transformers import SentenceTransformer
@@ -20,11 +22,21 @@ from sentence_transformers import SentenceTransformer
 class LocalRetriever:
     """Dense-only retrieval system using FAISS."""
 
-    def __init__(self, data_dir: str):
+    def __init__(self, data_dir: str, device: str = "cpu", gpu_memory_limit_mb: int = 6144):
         self.data_dir = Path(data_dir)
         self.corpus = []
         self.dense_index = None
-        self.encoder = SentenceTransformer("intfloat/e5-base-v2")
+        self._lock = threading.Lock()
+
+        if device.startswith("cuda"):
+            dev_idx = int(device.split(":")[-1]) if ":" in device else 0
+            fraction = gpu_memory_limit_mb / (torch.cuda.get_device_properties(dev_idx).total_memory / 1024**2)
+            fraction = min(fraction, 1.0)
+            torch.cuda.set_per_process_memory_fraction(fraction, dev_idx)
+            print(f"GPU memory limit: {gpu_memory_limit_mb}MB (fraction={fraction:.4f}) on cuda:{dev_idx}")
+
+        self.encoder = SentenceTransformer("intfloat/e5-base-v2", device=device)
+        print(f"E5 encoder loaded on device: {device}")
 
         self._load_data()
 
@@ -44,8 +56,9 @@ class LocalRetriever:
         print(f"Loaded dense index with {self.dense_index.ntotal} vectors")
 
     def search(self, query: str, k: int = 10) -> list[dict[str, Any]]:
-        """Dense retrieval using FAISS."""
-        query_vector = self.encoder.encode([f"query: {query}"]).astype("float32")
+        """Dense retrieval using FAISS. Lock serializes GPU encoding to prevent memory bloat."""
+        with self._lock:
+            query_vector = self.encoder.encode([f"query: {query}"]).astype("float32")
         scores, indices = self.dense_index.search(query_vector, k)
 
         return [{"content": self.corpus[idx], "score": float(score)} for score, idx in zip(scores[0], indices[0], strict=False) if idx < len(self.corpus)]
@@ -89,13 +102,15 @@ def main():
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument("--device", default="cpu", help="Device for E5 encoder (cpu, cuda, cuda:0, etc.)")
+    parser.add_argument("--gpu_memory_limit_mb", type=int, default=1024, help="Max GPU memory in MB for E5 encoder (default: 1024)")
 
     args = parser.parse_args()
 
     # Initialize retriever
     global retriever
     try:
-        retriever = LocalRetriever(args.data_dir)
+        retriever = LocalRetriever(args.data_dir, device=args.device, gpu_memory_limit_mb=args.gpu_memory_limit_mb)
         print(f"Dense retrieval server initialized with {len(retriever.corpus)} documents")
     except Exception as e:
         print(f"Failed to initialize retriever: {e}")
@@ -103,7 +118,7 @@ def main():
 
     # Start server
     print(f"Starting dense retrieval server on {args.host}:{args.port}")
-    app.run(host=args.host, port=args.port, debug=args.debug, threaded=False)
+    app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
 
 
 if __name__ == "__main__":

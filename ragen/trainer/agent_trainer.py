@@ -54,6 +54,7 @@ from ragen.llm_agent.agent_proxy import LLMAgentProxy
 from ragen.utils import GenerationsLogger
 from ragen.trainer.rollout_filter import build_rollout_filter
 from ragen.trainer.collapse_metrics import CollapseDetector
+from ragen.trainer.gradient_reporter import run_gradient_analysis
 
 from tensordict import TensorDict
 
@@ -473,6 +474,8 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             strategy=getattr(rollout_cfg, "rollout_filter_strategy", "top_p"),
             top_p_prob_mode=getattr(rollout_cfg, "rollout_filter_top_p_prob_mode", "linear"),
             selection_eps=getattr(rollout_cfg, "rollout_filter_selection_eps", 0.01),
+            bucket_count=getattr(rollout_cfg, "gradient_analysis_num_buckets", 6),
+            bucket_mode=getattr(rollout_cfg, "gradient_analysis_bucket_mode", "quantile"),
         )
 
         # create collapse detector
@@ -998,12 +1001,24 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
                 # implement critic warmup
                 if self.config.trainer.critic_warmup <= self.global_steps:
+                    gradient_analysis_every = self.config.trainer.get("gradient_analysis_every", 0)
+                    if self.config.trainer.get("gradient_analysis_mode", False) and gradient_analysis_every > 0:
+                        if (self.global_steps - 1) % gradient_analysis_every == 0:
+                            with marked_timer("gradient_analysis", timing_raw):
+                                run_gradient_analysis(self, batch, metrics)
+                            if self.config.trainer.get("exit_after_gradient_analysis", False):
+                                metrics["trainer/exited_after_gradient_analysis"] = 1.0
+                                logger.log(data=metrics, step=self.global_steps)
+                                _finish_logger()
+                                progress_bar.close()
+                                return
+
                     # update actor
                     with marked_timer("update_actor", timing_raw):
                         batch.meta_info["multi_turn"] = True
                         actor_output = self.actor_rollout_wg.update_actor(batch)
-                    actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
-                    metrics.update(actor_output_metrics)
+                        actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
+                        metrics.update(actor_output_metrics)
 
                 # Log rollout generations if enabled
                 rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
