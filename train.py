@@ -129,10 +129,11 @@ def get_custom_reward_fn(config):
 def add_dependency_and_validate_config(config):
 
     # validate config
-    assert config.micro_batch_size_per_gpu * config.trainer.n_gpus_per_node <= config.actor_rollout_ref.actor.ppo_mini_batch_size, \
-        f"micro_batch_size_per_gpu * n_gpus_per_node ({config.micro_batch_size_per_gpu * config.trainer.n_gpus_per_node}) must be less than or equal to ppo_mini_batch_size ({config.actor_rollout_ref.actor.ppo_mini_batch_size})"
-    assert config.actor_rollout_ref.actor.ppo_mini_batch_size % (config.micro_batch_size_per_gpu * config.trainer.n_gpus_per_node) == 0, \
-        f"ppo_mini_batch_size ({config.actor_rollout_ref.actor.ppo_mini_batch_size}) must be divisible by micro_batch_size_per_gpu * n_gpus_per_node ({config.micro_batch_size_per_gpu * config.trainer.n_gpus_per_node})"
+    actor_ppo_micro_batch_size = config.actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu
+    assert actor_ppo_micro_batch_size * config.trainer.n_gpus_per_node <= config.actor_rollout_ref.actor.ppo_mini_batch_size, \
+        f"actor ppo_micro_batch_size_per_gpu * n_gpus_per_node ({actor_ppo_micro_batch_size * config.trainer.n_gpus_per_node}) must be less than or equal to ppo_mini_batch_size ({config.actor_rollout_ref.actor.ppo_mini_batch_size})"
+    assert config.actor_rollout_ref.actor.ppo_mini_batch_size % (actor_ppo_micro_batch_size * config.trainer.n_gpus_per_node) == 0, \
+        f"ppo_mini_batch_size ({config.actor_rollout_ref.actor.ppo_mini_batch_size}) must be divisible by actor ppo_micro_batch_size_per_gpu * n_gpus_per_node ({actor_ppo_micro_batch_size * config.trainer.n_gpus_per_node})"
     assert ("qwen" in config.model_path.lower() or "llama-3" in config.model_path.lower()) or (not config.enable_response_mask), \
         "response mask is currently only supported for qwen and llama-3 models"
     assert len(str(config.system.CUDA_VISIBLE_DEVICES).split(',')) == config.trainer.n_gpus_per_node, \

@@ -10,6 +10,7 @@ seed:
   val: 123
 
 micro_batch_size_per_gpu: 4
+log_prob_micro_batch_size_per_gpu: 4
 ppo_mini_batch_size: 32
 model_path: Qwen/Qwen2.5-3B-Instruct
 enable_response_mask: True # Enabling response mask could improve stability of rollout/old_log_prob, as P(st|history) are no longer calculated in loss here. See https://docs.google.com/document/d/1bg7obeiKTExuHHBl5uOiSpec5uLDZ2Tgvxy6li5pHX4/edit?usp=sharing for more details.
@@ -28,7 +29,7 @@ actor_rollout_ref:
     target_modules: ${lora.target_modules}
   actor:
     ppo_mini_batch_size: ${ppo_mini_batch_size}  # by default, ppo_mini_batch_size = train_batch_size / 4
-    ppo_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
+    ppo_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu}
     use_ref: True
     entropy_coeff: 0.001
     use_kl_loss: False
@@ -44,11 +45,11 @@ actor_rollout_ref:
       betas: [0.9, 0.999]
       lr: 1e-6
   ref:
-    log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
+    log_prob_micro_batch_size_per_gpu: ${log_prob_micro_batch_size_per_gpu}
   rollout:
     name: vllm
     load_format: auto  # load from huggingface instead of dummy (random init)
-    log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
+    log_prob_micro_batch_size_per_gpu: ${log_prob_micro_batch_size_per_gpu}
     tensor_model_parallel_size: 1
     max_model_len: 3600
     prompt_length: 1 # useless. Just put it here
@@ -72,7 +73,7 @@ actor_rollout_ref:
 
 critic:
   ppo_mini_batch_size: ${ppo_mini_batch_size} # by default, ppo_mini_batch_size = train_batch_size / 4
-  ppo_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
+  ppo_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu}
   model:
     path: ${model_path}
     lora_rank: ${lora.rank}

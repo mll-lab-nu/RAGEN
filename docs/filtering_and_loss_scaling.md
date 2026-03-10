@@ -60,7 +60,7 @@ We have implemented three strategies to filter rollout groups based on their rew
     ```
 
 ### Other Parameters
--   **`rollout_filter_metric`**: `reward_variance` (default), `reward`, `entropy`, `entropy_variance`, or `length`.
+-   **`rollout_filter_metric`**: `reward_variance` (default), `reward`, `reward_sum`, `entropy`, `entropy_variance`, or `length`.
 -   **`rollout_filter_type`**: `largest` (default) or `smallest`. Determines if we want high or low scores.
 -   **`rollout_filter_include_zero`**: If `True`, groups with zero score are candidates for filtering. If `False`, they are excluded or handled differently depending on the specific logic (often used to ensure we don't train on complete failures).
 

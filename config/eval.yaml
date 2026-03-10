@@ -29,7 +29,7 @@ actor_rollout_ref:
     target_modules: ${lora.target_modules}
   rollout:
     name: vllm
-    log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu}
+    log_prob_micro_batch_size_per_gpu: ${log_prob_micro_batch_size_per_gpu}
     tensor_model_parallel_size: 1
     dtype: bfloat16
     max_model_len: 3600

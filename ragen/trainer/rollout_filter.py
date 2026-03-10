@@ -343,7 +343,7 @@ class LengthRolloutFilter(RolloutFilter):
 class RewardRolloutFilter(RolloutFilter):
     """Filters rollouts based on reward statistics within groups."""
 
-    _METRIC_OPTIONS = {"reward", "reward_variance"}
+    _METRIC_OPTIONS = {"reward", "reward_sum", "reward_variance"}
 
     def __init__(self, config: RolloutFilterConfig) -> None:
         super().__init__(config)
@@ -353,10 +353,15 @@ class RewardRolloutFilter(RolloutFilter):
             )
 
     def _selection_scores(
-        self, in_group_std: torch.Tensor, in_group_mean: torch.Tensor
+        self,
+        in_group_std: torch.Tensor,
+        in_group_mean: torch.Tensor,
+        in_group_sum: torch.Tensor,
     ) -> torch.Tensor:
         if self.config.metric == "reward":
             return in_group_mean
+        if self.config.metric == "reward_sum":
+            return in_group_sum
         return in_group_std
 
     def filter(self, batch: DataProto) -> Tuple[DataProto, Dict[str, torch.Tensor]]:
@@ -410,8 +415,9 @@ class RewardRolloutFilter(RolloutFilter):
         in_group_std = rm_scores.std(dim=-1)
         in_group_max = rm_scores.max(dim=-1).values
         in_group_mean = rm_scores.mean(dim=-1)
+        in_group_sum = rm_scores.sum(dim=-1)
 
-        selection_scores = self._selection_scores(in_group_std, in_group_mean)
+        selection_scores = self._selection_scores(in_group_std, in_group_mean, in_group_sum)
         top_groups = self._select_top_groups(selection_scores)
 
         metrics = self._build_base_metrics(in_group_std, in_group_max, in_group_mean, top_groups)
@@ -420,9 +426,11 @@ class RewardRolloutFilter(RolloutFilter):
                 "rollout/in_group_reward_std": in_group_std.mean(),
                 "rollout/in_group_reward_max": in_group_max.mean(),
                 "rollout/in_group_reward_mean": in_group_mean.mean(),
+                "rollout/in_group_reward_sum": in_group_sum.mean(),
                 "rollout/chosen_in_group_reward_std": self._selected_mean(in_group_std, top_groups),
                 "rollout/chosen_in_group_reward_max": self._selected_mean(in_group_max, top_groups),
                 "rollout/chosen_in_group_reward_mean": self._selected_mean(in_group_mean, top_groups),
+                "rollout/chosen_in_group_reward_sum": self._selected_mean(in_group_sum, top_groups),
                 "rollout/filter_kept_count": torch.tensor(float(top_groups.numel())),
                 "rollout/filter_kept_ratio": torch.tensor(top_groups.numel() / self.num_groups),
                 "rollout/filter_zero_count": (torch.abs(selection_scores) <= 1e-10).sum(),
@@ -433,7 +441,7 @@ class RewardRolloutFilter(RolloutFilter):
 
         if self.strategy == "top_p" and self.config.value >= 1 and self.config.include_zero:
             # Attach reward std to batch even if not filtering
-            reward_std_per_sample = in_group_std.unsqueeze(1).expand(-1, group_size).reshape(-1).to(batch.batch["responses"].device)
+            reward_std_per_sample = in_group_std.unsqueeze(1).expand(-1, group_size).reshape(-1)
             batch.batch["reward_std"] = reward_std_per_sample
             return batch, metrics
 
@@ -461,7 +469,7 @@ class RewardRolloutFilter(RolloutFilter):
         # Note: The actor will receive the filtered batch, so we need to attach the info here.
         # Ideally we want the ORIGINAL group std, not the filtered one (which might be 0 if single sample kept).
         # We broadcast the original in_group_std to the original batch size, then apply the mask.
-        reward_std_per_sample = in_group_std.unsqueeze(1).expand(-1, group_size).reshape(-1).to(batch.batch["responses"].device)
+        reward_std_per_sample = in_group_std.unsqueeze(1).expand(-1, group_size).reshape(-1)
         
         # Apply the same mask to the reward_std tensor
         if has_episode_ids:
@@ -769,7 +777,7 @@ def build_rollout_filter(
 
     if metric == "length":
         return LengthRolloutFilter(config)
-    if metric in {"reward", "reward_variance"}:
+    if metric in {"reward", "reward_sum", "reward_variance"}:
         return RewardRolloutFilter(config)
     if metric in {"entropy", "entropy_variance"}:
         if compute_log_prob is None:
