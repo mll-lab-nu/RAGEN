@@ -24,11 +24,16 @@ def _set_meta_flag(meta: Dict, key: str, value: bool):
 def run_gradient_analysis(trainer, batch, metrics):
     print(f"[Gradient Analysis] Step {trainer.global_steps}: Running analysis on buckets...")
 
+    analysis_batch, analysis_rollout_filter = trainer.get_gradient_analysis_batch_and_filter(batch, metrics)
+    if len(analysis_batch) == 0:
+        print("[Gradient Analysis] Analysis batch is empty after filtering. Skipping.")
+        return
+
     try:
-        buckets = trainer.rollout_filter.split_into_buckets(batch)
+        buckets = analysis_rollout_filter.split_into_buckets(analysis_batch)
     except AttributeError:
         print("[Gradient Analysis] Rollout filter does not support 'split_into_buckets'. Using default batch.")
-        buckets = {"all": batch}
+        buckets = {"all": analysis_batch}
 
     for bucket_name, sub_batch in buckets.items():
         count = sub_batch.batch.batch_size[0]
@@ -51,7 +56,7 @@ def run_gradient_analysis(trainer, batch, metrics):
 
         print(f"[Gradient Analysis] Processing bucket '{bucket_name}' with {count} samples.")
 
-        total_samples = batch.batch.batch_size[0]
+        total_samples = analysis_batch.batch.batch_size[0]
         metrics[f"grad_norm/{bucket_name}/sample_count"] = count
         if total_samples > 0:
             metrics[f"grad_norm/{bucket_name}/sample_pct"] = count / total_samples

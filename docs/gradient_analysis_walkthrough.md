@@ -5,10 +5,24 @@ This document explains how gradient analysis works in the current RAGEN codebase
 Normal training now enables gradient analysis by default:
 - `trainer.gradient_analysis_mode=True`
 - `trainer.gradient_analysis_every=50`
+- by default it reuses the training batch unless separate analysis batch overrides are set
 
 ## Quickstart
 
-### Run one analysis job from scratch
+### Run a periodic analysis job from scratch
+
+```bash
+bash scripts/runs/run_sokoban_ppo_filter_grad_analysis.sh \
+  --gpus 0,1,2,3,4,5,6,7
+```
+
+That helper script:
+- trains for `101` steps
+- runs validation before training and then every `10` steps
+- runs gradient analysis on steps `1`, `51`, and `101`
+- uses the main-table training batch (`8x16`) but a separate analysis batch (`128x16`)
+
+### Run one analysis-only job
 
 ```bash
 bash scripts/runs/run_sokoban_ppo_filter_grad_analysis.sh \
@@ -16,10 +30,9 @@ bash scripts/runs/run_sokoban_ppo_filter_grad_analysis.sh \
   --gpus 0,1,2,3,4,5,6,7
 ```
 
-That helper script:
-- runs one pre-train validation
-- runs one gradient-analysis pass on step 1
-- exits immediately after the analysis
+Then set:
+- `trainer.gradient_analysis_every=1`
+- `trainer.exit_after_gradient_analysis=True`
 
 ### Plot the finished run
 
@@ -56,6 +69,11 @@ So the important boundary is:
 - gradient analysis runs after rollout, filtering, reward computation, and critic update
 - it runs before the normal actor update
 - with `exit_after_gradient_analysis=True`, the run exits before actor update, checkpoint save, and post-step validation
+
+When `trainer.gradient_analysis_env_groups` or `trainer.gradient_analysis_group_size` is set:
+- training still uses the normal training batch
+- the analysis step generates a second, separate rollout batch just for gradient analysis
+- that separate batch is filtered, scored, bucketed, and probed without affecting the training update batch
 
 ## How Bucketing Works
 
@@ -157,11 +175,23 @@ These are the gradient-analysis-specific trainer overrides:
 - default behavior in `config/base.yaml`: `False`
 - it does not suppress `val_before_train`
 
-4. `actor_rollout_ref.rollout.gradient_analysis_num_buckets=<N>`
+4. `trainer.gradient_analysis_env_groups=<N>`
+- optional
+- if set, gradient analysis uses a separate rollout batch with this many groups
+- training keeps using `es_manager.train.env_groups`
+- default behavior in `config/base.yaml`: `null` (reuse training batch)
+
+5. `trainer.gradient_analysis_group_size=<N>`
+- optional
+- if set, gradient analysis uses a separate rollout batch with this group size
+- training keeps using `es_manager.train.group_size`
+- default behavior in `config/base.yaml`: `null` (reuse training batch)
+
+6. `actor_rollout_ref.rollout.gradient_analysis_num_buckets=<N>`
 - number of quantile buckets
 - default is `6`
 
-5. `actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile|fixed_rv`
+7. `actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile|fixed_rv`
 - chooses the bucketing rule
 - default is `quantile`
 
@@ -188,8 +218,8 @@ These are not new, but they materially affect the analysis:
   - `actor_rollout_ref.rollout.rollout_filter_include_zero`
 
 The current Sokoban PPO helper runner uses:
-- `env_groups=32`
-- `group_size=16`
+- training batch: `env_groups=8`, `group_size=16`
+- analysis batch: `gradient_analysis_env_groups=128`, `gradient_analysis_group_size=16`
 - `rollout_filter_strategy=top_p`
 - `rollout_filter_value=0.9`
 - `rollout_filter_metric=reward_variance`

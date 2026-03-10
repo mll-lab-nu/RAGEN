@@ -257,6 +257,9 @@ class RayAgentTrainer(VerlRayPPOTrainer):
         self.early_stopped = False
         self.early_stop_type = None
         self.group_rv_table = None
+        self.gradient_analysis_proxy = None
+        self.gradient_analysis_rollout_filter = None
+        self.gradient_analysis_config = None
 
     def _early_stop_metric_key(self) -> str:
         stop_type = self.early_stop_type if self.early_stop_type else "unknown"
@@ -283,12 +286,96 @@ class RayAgentTrainer(VerlRayPPOTrainer):
         # self.train_seeds = [seed for seed in range(0, self.config.trainer.total_training_steps * 1000, 1000)]
         # self.val_seeds = [seed for seed in range(val_start, val_start + self.config.trainer.validation_steps)]
 
+    def _get_gradient_analysis_batch_shape(self):
+        train_env_groups = int(self.config.es_manager.train.env_groups)
+        train_group_size = int(self.config.es_manager.train.group_size)
+        analysis_env_groups = self.config.trainer.get("gradient_analysis_env_groups", None)
+        analysis_group_size = self.config.trainer.get("gradient_analysis_group_size", None)
+
+        env_groups = train_env_groups if analysis_env_groups is None else int(analysis_env_groups)
+        group_size = train_group_size if analysis_group_size is None else int(analysis_group_size)
+
+        if env_groups <= 0 or group_size <= 0:
+            raise ValueError(
+                f"Gradient analysis batch shape must be positive. Got env_groups={env_groups}, group_size={group_size}."
+            )
+
+        if env_groups == train_env_groups and group_size == train_group_size:
+            return None
+
+        return env_groups, group_size
+
+    @staticmethod
+    def _scale_env_config_group_counts(base_n_groups, target_total: int):
+        base_n_groups = [int(n) for n in base_n_groups]
+        base_total = sum(base_n_groups)
+        if base_total <= 0:
+            raise ValueError("Sum of base env_config n_groups must be positive.")
+        if target_total <= 0:
+            raise ValueError("Target env_groups must be positive.")
+
+        raw_scaled = [target_total * n / base_total for n in base_n_groups]
+        scaled = [int(x) for x in raw_scaled]
+        remainder = target_total - sum(scaled)
+        if remainder > 0:
+            order = sorted(
+                range(len(base_n_groups)),
+                key=lambda i: (raw_scaled[i] - scaled[i], base_n_groups[i]),
+                reverse=True,
+            )
+            for idx in order[:remainder]:
+                scaled[idx] += 1
+        elif remainder < 0:
+            order = sorted(
+                range(len(base_n_groups)),
+                key=lambda i: (raw_scaled[i] - scaled[i], base_n_groups[i]),
+            )
+            for idx in order[: -remainder]:
+                if scaled[idx] <= 0:
+                    continue
+                scaled[idx] -= 1
+
+        return scaled
+
+    def _build_gradient_analysis_config(self):
+        batch_shape = self._get_gradient_analysis_batch_shape()
+        if batch_shape is None:
+            return None
+
+        env_groups, group_size = batch_shape
+        analysis_config = deepcopy(self.config)
+        scaled_n_groups = self._scale_env_config_group_counts(
+            analysis_config.es_manager.train.env_configs.n_groups,
+            env_groups,
+        )
+
+        with open_dict(analysis_config):
+            analysis_config.es_manager.train.env_groups = env_groups
+            analysis_config.es_manager.train.group_size = group_size
+            analysis_config.es_manager.train.env_configs.n_groups = scaled_n_groups
+
+        print(
+            f"[Gradient Analysis] Using separate analysis batch: env_groups={env_groups}, "
+            f"group_size={group_size}, env_configs.n_groups={scaled_n_groups}"
+        )
+        return analysis_config
+
     def init_agent_proxy(self):
+        if self.gradient_analysis_config is None:
+            self.gradient_analysis_config = self._build_gradient_analysis_config()
         self.agent_proxy = LLMAgentProxy(
             config=self.config,
             actor_rollout_wg=self.actor_rollout_wg,
             tokenizer=self.tokenizer
         )
+        if self.gradient_analysis_config is not None:
+            self.gradient_analysis_proxy = LLMAgentProxy(
+                config=self.gradient_analysis_config,
+                actor_rollout_wg=self.actor_rollout_wg,
+                tokenizer=self.tokenizer,
+            )
+        else:
+            self.gradient_analysis_proxy = None
 
     def _maybe_log_generations(self, inputs, outputs, scores, _type="val"):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
@@ -507,6 +594,8 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
     def init_workers(self):
         super().init_workers()
+        if self.gradient_analysis_config is None:
+            self.gradient_analysis_config = self._build_gradient_analysis_config()
 
         # create rollout filter
         rollout_cfg = self.config.actor_rollout_ref.rollout
@@ -525,6 +614,28 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             bucket_count=getattr(rollout_cfg, "gradient_analysis_num_buckets", 6),
             bucket_mode=getattr(rollout_cfg, "gradient_analysis_bucket_mode", "quantile"),
         )
+        if self.gradient_analysis_config is not None:
+            analysis_rollout_cfg = self.gradient_analysis_config.actor_rollout_ref.rollout
+            self.gradient_analysis_rollout_filter = build_rollout_filter(
+                value=getattr(
+                    analysis_rollout_cfg,
+                    "rollout_filter_value",
+                    getattr(analysis_rollout_cfg, "rollout_filter_ratio", 0.25),
+                ),
+                filter_type=analysis_rollout_cfg.rollout_filter_type,
+                num_groups=self.gradient_analysis_config.es_manager.train.env_groups,
+                group_size=self.gradient_analysis_config.es_manager.train.group_size,
+                metric=rollout_metric,
+                compute_log_prob=self.actor_rollout_wg.compute_log_prob,
+                include_zero=getattr(analysis_rollout_cfg, "rollout_filter_include_zero", True),
+                strategy=getattr(analysis_rollout_cfg, "rollout_filter_strategy", "top_p"),
+                top_p_prob_mode=getattr(analysis_rollout_cfg, "rollout_filter_top_p_prob_mode", "linear"),
+                selection_eps=getattr(analysis_rollout_cfg, "rollout_filter_selection_eps", 0.01),
+                bucket_count=getattr(analysis_rollout_cfg, "gradient_analysis_num_buckets", 6),
+                bucket_mode=getattr(analysis_rollout_cfg, "gradient_analysis_bucket_mode", "quantile"),
+            )
+        else:
+            self.gradient_analysis_rollout_filter = self.rollout_filter
 
         # create collapse detector
         collapse_cfg = self.config.get("collapse_detection", {})
@@ -564,6 +675,146 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             ema_decay=collapse_cfg.get("ema_decay", 0.9),
             log_prob_world_size=trainer_nnodes * trainer_n_gpus,
         )
+
+    def _build_separate_gradient_analysis_batch(self, metrics):
+        if self.gradient_analysis_proxy is None or self.gradient_analysis_rollout_filter is None:
+            return None
+
+        analysis_env_groups = int(self.gradient_analysis_config.es_manager.train.env_groups)
+        analysis_group_size = int(self.gradient_analysis_config.es_manager.train.group_size)
+        metrics["grad_analysis/source_env_groups"] = analysis_env_groups
+        metrics["grad_analysis/source_group_size"] = analysis_group_size
+
+        batch = DataProto()
+        batch.meta_info = {"compute_collapse": False}
+        batch = self.gradient_analysis_proxy.rollout(batch, val=False)
+        raw_batch_size = batch.batch["input_ids"].shape[0]
+        metrics["grad_analysis/source_batch_size"] = raw_batch_size
+
+        batch, filter_metrics = self.gradient_analysis_rollout_filter.filter(batch)
+        metrics["grad_analysis/empty_after_filter"] = float(len(batch) == 0)
+        for key, value in filter_metrics.items():
+            if key.startswith("rollout/_"):
+                continue
+            metrics[f"grad_analysis/{key.split('/', 1)[-1]}"] = value
+
+        if len(batch) == 0:
+            return batch
+
+        ppo_mini_batch_size = self.config.actor_rollout_ref.actor.ppo_mini_batch_size
+        n_gpus = self.config.trainer.n_gpus_per_node
+        size_divisor = np.lcm.reduce([analysis_env_groups, ppo_mini_batch_size, n_gpus])
+        adjust_mode = getattr(self.config.agent_proxy, "batch_adjust_mode", "copy")
+        batch = adjust_batch(batch, size_divisor, mode=adjust_mode)
+        metrics["grad_analysis/adjusted_batch_size"] = batch.batch["input_ids"].shape[0]
+
+        batch.non_tensor_batch["uid"] = batch.non_tensor_batch["group_ids"]
+        batch.batch["response_mask"] = batch.batch["loss_mask"]
+
+        if self.config.trainer.balance_batch:
+            self._balance_batch(batch, metrics={})
+
+        batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
+
+        if self.use_rm:
+            reward_tensor = self.rm_wg.compute_rm_score(batch)
+            batch = batch.union(reward_tensor)
+
+        if self.config.reward_model.launch_reward_fn_async:
+            future_reward = compute_reward_async.remote(batch, self.config, self.tokenizer)
+        else:
+            reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
+
+        old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+        old_log_prob.batch.pop("entropys")
+        batch = batch.union(old_log_prob)
+
+        if self.use_reference_policy:
+            if not self.ref_in_actor:
+                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
+            else:
+                ref_log_prob = self.actor_rollout_wg.compute_ref_log_prob(batch)
+            batch = batch.union(ref_log_prob)
+
+        if self.use_critic:
+            values = self.critic_wg.compute_values(batch)
+            batch = batch.union(values)
+
+        if self.config.reward_model.launch_reward_fn_async:
+            reward_tensor, reward_extra_infos_dict = ray.get(future_reward)
+
+        batch.batch["token_level_scores"] = reward_tensor
+        if reward_extra_infos_dict:
+            batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
+
+        if self.config.algorithm.use_kl_in_reward:
+            batch, _ = apply_kl_penalty(
+                batch,
+                kl_ctrl=self.kl_ctrl_in_reward,
+                kl_penalty=self.config.algorithm.kl_penalty,
+                multi_turn=True,
+            )
+        else:
+            batch.batch["token_level_rewards"] = batch.batch["token_level_scores"]
+
+        norm_adv_by_std_in_grpo = self.config.algorithm.get("norm_adv_by_std_in_grpo", True)
+        soft_advantage_reweight = self.config.algorithm.get("soft_advantage_reweight", False)
+        batch = compute_advantage(
+            batch,
+            adv_estimator=self.config.algorithm.adv_estimator,
+            gamma=self.config.algorithm.gamma,
+            lam=self.config.algorithm.lam,
+            num_repeat=self.config.actor_rollout_ref.rollout.n,
+            norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+            multi_turn=True,
+            high_level_gamma=self.config.algorithm.high_level_gamma,
+            bi_level_gae=self.config.algorithm.bi_level_gae,
+            soft_advantage_reweight=soft_advantage_reweight,
+        )
+
+        if soft_advantage_reweight and "group_std" in batch.batch:
+            group_std = batch.batch["group_std"]
+            index = batch.non_tensor_batch["uid"]
+            unique_idx, inverse = np.unique(index, return_inverse=True)
+            prompt_std = torch.zeros(len(unique_idx), device=group_std.device)
+            for i, _ in enumerate(unique_idx):
+                mask = inverse == i
+                prompt_std[i] = group_std[mask][0]
+            max_std = prompt_std.max()
+            epsilon = 1e-6
+            prompt_weight = prompt_std / (max_std + epsilon)
+            sample_weight = prompt_weight[torch.from_numpy(inverse).to(group_std.device)]
+            batch.batch["advantages"] = batch.batch["advantages"] * sample_weight.unsqueeze(-1)
+
+        filter_loss_scaling = getattr(self.config.actor_rollout_ref.actor, "filter_loss_scaling", "none")
+        filter_kept_ratio = batch.meta_info.get("filter_kept_ratio", 1.0)
+        if filter_loss_scaling == "linear":
+            batch.batch["advantages"] *= filter_kept_ratio
+        elif filter_loss_scaling == "sqrt":
+            batch.batch["advantages"] *= (filter_kept_ratio ** 0.5)
+
+        if self.config.algorithm.adv_estimator == AdvantageEstimator.GRPO and self.config.grpo_advantage_length_weight:
+            response_mask = batch.batch["response_mask"]
+            advantages = batch.batch["advantages"]
+            response_relative_lengths = (
+                (torch.sum(response_mask, dim=-1) + 1e-6)
+                / torch.sum(response_mask, dim=-1).float().mean()
+            )
+            batch.batch["advantages"] = advantages / response_relative_lengths.unsqueeze(-1)
+
+        if self.config.algorithm.get("zero_task_advantage", False):
+            batch.batch["advantages"] = torch.zeros_like(batch.batch["advantages"])
+
+        return batch
+
+    def get_gradient_analysis_batch_and_filter(self, batch, metrics):
+        analysis_batch = self._build_separate_gradient_analysis_batch(metrics)
+        if analysis_batch is None:
+            metrics["grad_analysis/uses_training_batch"] = 1.0
+            return batch, self.rollout_filter
+
+        metrics["grad_analysis/uses_training_batch"] = 0.0
+        return analysis_batch, self.gradient_analysis_rollout_filter
 
 
     def _save_checkpoint(self):

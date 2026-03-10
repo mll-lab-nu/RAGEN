@@ -7,11 +7,12 @@
 # - algo: PPO
 # - filter: top_p=0.9
 # - model: Qwen2.5-3B
-# - group_size: 16 (same as the main-table setup)
+# - train batch: 8 groups x 16 samples (same as the main-table setup)
+# - gradient-analysis batch: 128 groups x 16 samples
 #
 # Validation policy:
-# - exactly one validation before training
-# - no periodic validation afterwards
+# - one validation before training
+# - periodic validation every 10 steps
 #
 # Gradient-analysis policy:
 # - run gradient analysis every 50 steps
@@ -21,7 +22,7 @@
 set -euo pipefail
 
 STEPS=101
-SAVE_FREQ=-1
+SAVE_FREQ=100
 GPU_MEMORY_UTILIZATION=0.3
 RAY_NUM_CPUS=16
 GPUS=()
@@ -34,7 +35,9 @@ ALGO="PPO"
 FILTER_LABEL="filter"
 FILTER_VALUE="0.9"
 GROUP_SIZE=16
-ENV_GROUPS=32
+ENV_GROUPS=8
+ANALYSIS_GROUP_SIZE=16
+ANALYSIS_ENV_GROUPS=128
 CONFIG_NAME="_2_sokoban"
 
 usage() {
@@ -44,7 +47,7 @@ usage() {
     echo "  --gpus LIST                  Comma-separated GPU IDs (default: auto-detect)"
     echo "  --gpu-memory-utilization V   Rollout gpu_memory_utilization (default: 0.3)"
     echo "  --ray-num-cpus N             Max CPUs for ray.init (default: 16)"
-    echo "  --save-freq N                Checkpoint save frequency (default: -1)"
+    echo "  --save-freq N                Checkpoint save frequency (default: 100)"
     echo "  -h, --help                   Show this help"
     exit 0
 }
@@ -94,7 +97,7 @@ if [ "$NUM_GPUS" -lt 1 ]; then
     exit 1
 fi
 
-EXP_NAME="${TASK}-${ALGO}-${FILTER_LABEL}-topp09-${MODEL_NAME}-${ENV_GROUPS}x${GROUP_SIZE}-grad-every50"
+EXP_NAME="${TASK}-${ALGO}-${FILTER_LABEL}-topp09-${MODEL_NAME}-train${ENV_GROUPS}x${GROUP_SIZE}-analysis${ANALYSIS_ENV_GROUPS}x${ANALYSIS_GROUP_SIZE}-grad-every50"
 LOG_DIR="logs/gradient_analysis_${TASK}_${MODEL_NAME}"
 CHECKPOINT_DIR="model_saving/gradient_analysis/${TASK}/${ALGO}/${FILTER_LABEL}/${EXP_NAME}"
 LOG_PATH="${LOG_DIR}/${EXP_NAME}.log"
@@ -104,7 +107,7 @@ mkdir -p "$CHECKPOINT_DIR"
 
 echo "=== Gradient Analysis Runner: $(date) ===" | tee "$LOG_PATH"
 echo "task=${TASK} algo=${ALGO} filter=top_p:${FILTER_VALUE} model=${MODEL_NAME} steps=${STEPS} gpus=${GPU_LIST}" | tee -a "$LOG_PATH"
-echo "group_size=${GROUP_SIZE} env_groups=${ENV_GROUPS} gradient_analysis_every=50 exit_after_gradient_analysis=False" | tee -a "$LOG_PATH"
+echo "train_group_size=${GROUP_SIZE} train_env_groups=${ENV_GROUPS} analysis_group_size=${ANALYSIS_GROUP_SIZE} analysis_env_groups=${ANALYSIS_ENV_GROUPS} gradient_analysis_every=50 exit_after_gradient_analysis=False" | tee -a "$LOG_PATH"
 
 CUDA_VISIBLE_DEVICES="${GPU_LIST}" python train.py --config-name "${CONFIG_NAME}" \
     model_path="${MODEL_PATH}" \
@@ -115,7 +118,7 @@ CUDA_VISIBLE_DEVICES="${GPU_LIST}" python train.py --config-name "${CONFIG_NAME}
     trainer.default_local_dir="${CHECKPOINT_DIR}" \
     trainer.logger="['console','wandb']" \
     trainer.val_before_train=True \
-  trainer.test_freq=10 \
+    trainer.test_freq=10 \
     trainer.n_gpus_per_node="${NUM_GPUS}" \
     ray_kwargs.ray_init.num_cpus="${RAY_NUM_CPUS}" \
     system.CUDA_VISIBLE_DEVICES="'${GPU_LIST}'" \
@@ -141,6 +144,8 @@ CUDA_VISIBLE_DEVICES="${GPU_LIST}" python train.py --config-name "${CONFIG_NAME}
     algorithm.adv_estimator=gae \
     trainer.gradient_analysis_mode=True \
     trainer.gradient_analysis_every=50 \
+    trainer.gradient_analysis_env_groups="${ANALYSIS_ENV_GROUPS}" \
+    trainer.gradient_analysis_group_size="${ANALYSIS_GROUP_SIZE}" \
     trainer.exit_after_gradient_analysis=False \
     actor_rollout_ref.rollout.gradient_analysis_num_buckets=6 \
     actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile \
