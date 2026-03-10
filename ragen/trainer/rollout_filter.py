@@ -536,11 +536,19 @@ class RewardRolloutFilter(RolloutFilter):
                 bucket_group_masks[name] = group_mask
                 bucket_group_indices[name] = torch.where(group_mask)[0]
         else:
-            # Equal-percentage buckets (by groups). Remainder is assigned to the last bucket.
-            num_buckets = self.bucket_count
-            groups_per_bucket = num_groups // num_buckets
-            remainder = num_groups % num_buckets
+            # Equal-percentage buckets by groups. If there are fewer kept groups than the
+            # requested bucket count, reduce the effective bucket count so each bucket has
+            # at least one group. Remainder is still assigned to the last bucket.
+            num_buckets = min(self.bucket_count, num_groups) if num_groups > 0 else 0
+            groups_per_bucket = num_groups // num_buckets if num_buckets > 0 else 0
+            remainder = num_groups % num_buckets if num_buckets > 0 else 0
             sorted_group_ids = torch.argsort(reward_std_per_group)
+
+            if 0 < num_buckets < self.bucket_count:
+                print(
+                    f"[Gradient Analysis] Reducing quantile bucket count from {self.bucket_count} "
+                    f"to {num_buckets} because only {num_groups} groups were kept."
+                )
 
             start = 0
             for i in range(num_buckets):

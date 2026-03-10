@@ -2,6 +2,10 @@
 
 This document explains how gradient analysis works in the current RAGEN codebase, which arguments control it, which W&B metrics it writes, how to run it from scratch or from a checkpoint, and how to turn a finished W&B run into local plots.
 
+Normal training now enables gradient analysis by default:
+- `trainer.gradient_analysis_mode=True`
+- `trainer.gradient_analysis_every=50`
+
 ## Quickstart
 
 ### Run one analysis job from scratch
@@ -73,6 +77,7 @@ Two bucket modes are supported:
 - Controlled by `gradient_analysis_num_buckets`
 - Groups are sorted by group-level `reward_std`
 - They are split into equal-percentage buckets
+- If the filtered batch contains fewer groups than the requested bucket count, the effective bucket count is reduced so each bucket still contains at least one group
 - Bucket names are `bucket_1` to `bucket_N`
 - `bucket_1` is lowest reward variance, `bucket_N` is highest reward variance
 
@@ -129,31 +134,34 @@ Important detail:
 
 These are the gradient-analysis-specific trainer overrides:
 
-1. `+trainer.gradient_analysis_mode=True`
+1. `trainer.gradient_analysis_mode=True`
 - enables the feature
-- default behavior if omitted: disabled
+- default behavior in `config/base.yaml`: enabled
+- set `trainer.gradient_analysis_mode=False` to disable it
 
-2. `+trainer.gradient_analysis_every=<N>`
+2. `trainer.gradient_analysis_every=<N>`
 - run analysis every `N` training steps
 - trigger condition is:
   - `(global_steps - 1) % gradient_analysis_every == 0`
+- default behavior in `config/base.yaml`: `50`
 - so `gradient_analysis_every=1` means every step
-- `gradient_analysis_every=10` means steps `1, 11, 21, ...`
+- `gradient_analysis_every=50` means steps `1, 51, 101, ...`
 
-3. `+trainer.exit_after_gradient_analysis=True`
+3. `trainer.exit_after_gradient_analysis=True`
 - analysis-only mode
 - after the selected analysis step finishes, log metrics and exit immediately
 - exit happens before:
   - actor update
   - checkpoint save
   - post-step validation
+- default behavior in `config/base.yaml`: `False`
 - it does not suppress `val_before_train`
 
-4. `+actor_rollout_ref.rollout.gradient_analysis_num_buckets=<N>`
+4. `actor_rollout_ref.rollout.gradient_analysis_num_buckets=<N>`
 - number of quantile buckets
 - default is `6`
 
-5. `+actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile|fixed_rv`
+5. `actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile|fixed_rv`
 - chooses the bucketing rule
 - default is `quantile`
 
@@ -289,22 +297,22 @@ Key defaults inside that script:
 - `trainer.project_name=ragen_gradient_analysis`
 - `env_groups=32`
 - `group_size=16`
-- `+trainer.gradient_analysis_every=1`
-- `+trainer.exit_after_gradient_analysis=True`
-- `+actor_rollout_ref.rollout.gradient_analysis_num_buckets=6`
-- `+actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile`
+- `trainer.gradient_analysis_every=1`
+- `trainer.exit_after_gradient_analysis=True`
+- `actor_rollout_ref.rollout.gradient_analysis_num_buckets=6`
+- `actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile`
 
 ### 2. Direct `train.py` Usage
 
-Minimal pattern:
+Minimal pattern when you want to override the global defaults:
 
 ```bash
 python train.py ... \
-  +trainer.gradient_analysis_mode=True \
-  +trainer.gradient_analysis_every=1 \
-  +trainer.exit_after_gradient_analysis=True \
-  +actor_rollout_ref.rollout.gradient_analysis_num_buckets=6 \
-  +actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile
+  trainer.gradient_analysis_mode=True \
+  trainer.gradient_analysis_every=1 \
+  trainer.exit_after_gradient_analysis=True \
+  actor_rollout_ref.rollout.gradient_analysis_num_buckets=6 \
+  actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile
 ```
 
 ### 3. Resume From A Checkpoint And Probe It Once
@@ -346,11 +354,11 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python train.py --config-name _2_sokoban \
   actor_rollout_ref.rollout.rollout_filter_metric=reward_variance \
   actor_rollout_ref.rollout.rollout_filter_include_zero=True \
   algorithm.adv_estimator=gae \
-  +trainer.gradient_analysis_mode=True \
-  +trainer.gradient_analysis_every=1 \
-  +trainer.exit_after_gradient_analysis=True \
-  +actor_rollout_ref.rollout.gradient_analysis_num_buckets=6 \
-  +actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile
+  trainer.gradient_analysis_mode=True \
+  trainer.gradient_analysis_every=1 \
+  trainer.exit_after_gradient_analysis=True \
+  actor_rollout_ref.rollout.gradient_analysis_num_buckets=6 \
+  actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile
 ```
 
 Why `total_training_steps=101` for a `global_step_100` checkpoint:

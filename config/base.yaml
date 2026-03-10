@@ -65,6 +65,8 @@ actor_rollout_ref:
     rollout_filter_selection_eps: 0.01 # linear top_p uses threshold = top_p * sum(scores) - eps
     rollout_filter_empty_stop_steps: 5 # early stop after this many consecutive training steps with 0 kept samples
     rollout_filter_metric: reward_variance
+    gradient_analysis_num_buckets: 6
+    gradient_analysis_bucket_mode: quantile
     enforce_eager: True #  for small models, set both enforce_eager and free_cache_engine to False to make rollout faster
     free_cache_engine: True
     val_kwargs:
@@ -120,6 +122,9 @@ trainer:
   logger: [ 'console', 'wandb' ]
   max_actor_ckpt_to_keep: 1
   max_critic_ckpt_to_keep: 1
+  gradient_analysis_mode: True
+  gradient_analysis_every: 50
+  exit_after_gradient_analysis: False
 
 agent_proxy:
   context_window_mode: "full" # "full" | "limited_multi_turn" | "single_turn"

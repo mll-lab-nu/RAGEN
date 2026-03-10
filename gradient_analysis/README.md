@@ -16,6 +16,11 @@ There are two plotting entry points:
 For the training-side workflow and arguments, see:
 - [docs/gradient_analysis_walkthrough.md](/Users/deimos/Desktop/ICML/RAGEN/docs/gradient_analysis_walkthrough.md)
 
+Current default training behavior from [config/base.yaml](/Users/deimos/Desktop/ICML/RAGEN/config/base.yaml):
+- `trainer.gradient_analysis_mode=True`
+- `trainer.gradient_analysis_every=50`
+- `trainer.exit_after_gradient_analysis=False`
+
 ## Typical Workflow
 
 ### 1. Run one analysis job

@@ -137,9 +137,9 @@ CUDA_VISIBLE_DEVICES="${GPU_LIST}" python train.py --config-name "${CONFIG_NAME}
     actor_rollout_ref.actor.checkpoint.save_contents=[model] \
     critic.checkpoint.save_contents=[model] \
     algorithm.adv_estimator=gae \
-    +trainer.gradient_analysis_mode=True \
-    +trainer.gradient_analysis_every=1 \
-    +trainer.exit_after_gradient_analysis=True \
-    +actor_rollout_ref.rollout.gradient_analysis_num_buckets=6 \
-    +actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile \
+    trainer.gradient_analysis_mode=True \
+    trainer.gradient_analysis_every=1 \
+    trainer.exit_after_gradient_analysis=True \
+    actor_rollout_ref.rollout.gradient_analysis_num_buckets=6 \
+    actor_rollout_ref.rollout.gradient_analysis_bucket_mode=quantile \
     2>&1 | tee -a "$LOG_PATH"
