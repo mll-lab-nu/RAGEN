@@ -1,10 +1,11 @@
 #!/bin/bash
-# Webshop (release): GRPO with 3 release filter modes
+# Webshop (release): GRPO with 4 release filter modes
 # Model:
 #   - Qwen2.5-3B-Instruct
 # Filter modes:
 #   - topk25  => top_k, keep top 25% of groups
 #   - topp09  => top_p=0.9 with linear aggregation
+#   - topp095 => top_p=0.95 with linear aggregation
 #   - nofilter => top_p=1.0 with linear aggregation
 
 set -euo pipefail
@@ -18,7 +19,7 @@ NUM_GROUPS=16
 GROUP_SIZE=8
 MODEL_NAME="Qwen2.5-3B-Instruct"
 ALGO="GRPO"
-FILTER_MODES=("topk25" "topp09" "nofilter")
+FILTER_MODES=("topk25" "topp09" "topp095" "nofilter")
 FILTERS_OPTION="all"
 SELECTED_FILTERS=("${FILTER_MODES[@]}")
 
@@ -39,7 +40,7 @@ usage() {
     echo "  --cooldown SECONDS    Cooldown between runs on the same GPU group (default: 30)"
     echo "  --gpu-memory-utilization V  Rollout gpu_memory_utilization (default: 0.3)"
     echo "  --save-freq N         Checkpoint save frequency (default: 100)"
-    echo "  --filters LIST        Comma-separated filter modes (topk25,topp09,nofilter,all). Default: all"
+    echo "  --filters LIST        Comma-separated filter modes (topk25,topp09,topp095,nofilter,all). Default: all"
     echo "  -h, --help            Show this help"
     exit 0
 }
@@ -238,6 +239,9 @@ get_filter_config() {
         topp09)
             echo "top_p|0.9|linear|topp09-linear"
             ;;
+        topp095)
+            echo "top_p|0.95|linear|topp095-linear"
+            ;;
         nofilter)
             echo "top_p|1.0|linear|nofilter"
             ;;
@@ -408,7 +412,7 @@ resolve_filter_selection() {
     for candidate in "${candidates[@]}"; do
         candidate="${candidate// /}"
         case "$candidate" in
-            topk25|topp09|nofilter)
+            topk25|topp09|topp095|nofilter)
                 SELECTED_FILTERS+=("$candidate")
                 ;;
             "")
