@@ -406,11 +406,24 @@ class RewardRolloutFilter(RolloutFilter):
             
             # Reshape to (num_groups, group_size)
             rm_scores = episode_rewards.view(num_groups, group_size)
+            group_ids_for_metrics = torch.as_tensor(
+                episode_group_ids,
+                device=rm_scores.device,
+            ).view(num_groups, group_size)[:, 0]
         else:
             # Original mode: each sample is an episode
             actual_batch_size = batch.batch["original_rm_scores"].shape[0]
             group_size = actual_batch_size // num_groups
             rm_scores = batch.batch["original_rm_scores"].sum(dim=-1).view(num_groups, group_size)
+            if batch.non_tensor_batch is not None and "group_ids" in batch.non_tensor_batch:
+                raw_group_ids = batch.non_tensor_batch["group_ids"]
+                if not torch.is_tensor(raw_group_ids):
+                    raw_group_ids = torch.as_tensor(raw_group_ids, device=rm_scores.device)
+                else:
+                    raw_group_ids = raw_group_ids.to(rm_scores.device)
+                group_ids_for_metrics = raw_group_ids.view(num_groups, group_size)[:, 0]
+            else:
+                group_ids_for_metrics = torch.arange(num_groups, device=rm_scores.device)
 
         in_group_std = rm_scores.std(dim=-1)
         in_group_max = rm_scores.max(dim=-1).values
@@ -438,6 +451,9 @@ class RewardRolloutFilter(RolloutFilter):
         )
 
         metrics["rollout/_reward_matrix"] = rm_scores.detach().cpu()
+        metrics["rollout/_group_reward_std"] = in_group_std.detach().cpu()
+        metrics["rollout/_group_ids"] = group_ids_for_metrics.detach().cpu()
+        metrics["rollout/_selected_group_ids"] = group_ids_for_metrics[top_groups].detach().cpu()
 
         if self.strategy == "top_p" and self.config.value >= 1 and self.config.include_zero:
             # Attach reward std to batch even if not filtering

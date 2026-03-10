@@ -256,6 +256,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
         self.consecutive_low_success = collections.defaultdict(int)
         self.early_stopped = False
         self.early_stop_type = None
+        self.group_rv_table = None
 
     def _early_stop_metric_key(self) -> str:
         stop_type = self.early_stop_type if self.early_stop_type else "unknown"
@@ -312,6 +313,53 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
         # Log to each configured logger
         self.generations_logger.log(self.config.trainer.logger, samples, self.global_steps, _type)
+
+    def _build_group_rv_wandb_table(self, group_ids, reward_std_values, selected_group_ids):
+        """Append per-step group RV values to a cumulative W&B table."""
+        if not self.config.trainer.get("log_group_rv_table", False):
+            return None
+        if "wandb" not in self.config.trainer.logger:
+            return None
+
+        try:
+            import wandb
+        except ImportError:
+            return None
+
+        if torch.is_tensor(group_ids):
+            group_ids = group_ids.detach().cpu().tolist()
+        elif isinstance(group_ids, np.ndarray):
+            group_ids = group_ids.tolist()
+        if torch.is_tensor(reward_std_values):
+            reward_std_values = reward_std_values.detach().cpu().tolist()
+        elif isinstance(reward_std_values, np.ndarray):
+            reward_std_values = reward_std_values.tolist()
+        if torch.is_tensor(selected_group_ids):
+            selected_group_ids = selected_group_ids.detach().cpu().tolist()
+        elif isinstance(selected_group_ids, np.ndarray):
+            selected_group_ids = selected_group_ids.tolist()
+
+        if selected_group_ids is None:
+            selected_group_ids = []
+
+        selected_group_id_set = {int(group_id) for group_id in selected_group_ids}
+        columns = ["step", "group_id", "reward_std", "selected"]
+
+        if self.group_rv_table is None:
+            self.group_rv_table = wandb.Table(columns=columns)
+
+        # Work around W&B incremental table logging by re-creating the table with prior rows.
+        new_table = wandb.Table(columns=columns, data=self.group_rv_table.data)
+        for group_id, reward_std in zip(group_ids, reward_std_values):
+            new_table.add_data(
+                int(self.global_steps),
+                int(group_id),
+                float(reward_std),
+                int(group_id) in selected_group_id_set,
+            )
+
+        self.group_rv_table = new_table
+        return new_table
 
     def _validate(self):
         data_source_lst = []
@@ -681,6 +729,9 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                     batch, filter_metrics = self.rollout_filter.filter(batch)
 
                     reward_matrix = filter_metrics.pop("rollout/_reward_matrix", None)
+                    group_reward_std = filter_metrics.pop("rollout/_group_reward_std", None)
+                    group_ids = filter_metrics.pop("rollout/_group_ids", None)
+                    selected_group_ids = filter_metrics.pop("rollout/_selected_group_ids", None)
                     if reward_matrix is not None and "wandb" in self.config.trainer.logger:
                         try:
                             import wandb
@@ -697,6 +748,14 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                             )
                         except ImportError:
                             pass
+                    if group_reward_std is not None and group_ids is not None:
+                        group_rv_table = self._build_group_rv_wandb_table(
+                            group_ids=group_ids,
+                            reward_std_values=group_reward_std,
+                            selected_group_ids=selected_group_ids,
+                        )
+                        if group_rv_table is not None:
+                            filter_metrics["rollout/group_rv_table"] = group_rv_table
 
                     metrics.update(filter_metrics)
 

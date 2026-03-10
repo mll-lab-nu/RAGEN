@@ -122,6 +122,7 @@ trainer:
   logger: [ 'console', 'wandb' ]
   max_actor_ckpt_to_keep: 1
   max_critic_ckpt_to_keep: 1
+  log_group_rv_table: False
   gradient_analysis_mode: True
   gradient_analysis_every: 50
   exit_after_gradient_analysis: False
