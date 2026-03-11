@@ -138,6 +138,16 @@ bash scripts/setup_webshop.sh
 
 Use the original `setup_ragen.sh` path for WebShop. Do not rely on `setup_ragen_release.sh` for WebShop setup.
 
+For WebShop training runs, use the release runner documented in [docs/webshop_release_experiments.md](docs/webshop_release_experiments.md). The recommended entrypoint is:
+
+```bash
+bash scripts/runs/run_webshop_release_combos.sh \
+  --steps 400 \
+  --gpus 0,1,2,3 \
+  --gpus-per-exp 4 \
+  --filters nofilter
+```
+
 ### Optional Dependencies
 
 RAGEN supports optional environment-specific dependencies. You can install only the components you need:
