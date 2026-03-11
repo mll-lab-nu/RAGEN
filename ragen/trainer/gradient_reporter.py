@@ -21,40 +21,56 @@ def _set_meta_flag(meta: Dict, key: str, value: bool):
     return _restore()
 
 
-def run_gradient_analysis(trainer, batch, metrics):
-    print(f"[Gradient Analysis] Step {trainer.global_steps}: Running analysis on buckets...")
+def _run_gradient_pass(
+    trainer,
+    analysis_batch,
+    metrics,
+    metric_prefix,
+    label,
+    analysis_rollout_filter=None,
+    split_into_buckets=True,
+    mirror_all_to_root=False,
+):
+    if analysis_batch is None:
+        return
+    if len(analysis_batch) == 0:
+        print(f"[Gradient Analysis] {label} batch is empty. Skipping.")
+        return
 
-    try:
-        buckets = trainer.rollout_filter.split_into_buckets(batch)
-    except AttributeError:
-        print("[Gradient Analysis] Rollout filter does not support 'split_into_buckets'. Using default batch.")
-        buckets = {"all": batch}
+    if split_into_buckets and analysis_rollout_filter is not None:
+        try:
+            buckets = analysis_rollout_filter.split_into_buckets(analysis_batch)
+        except AttributeError:
+            print("[Gradient Analysis] Rollout filter does not support 'split_into_buckets'. Using default batch.")
+            buckets = {"all": analysis_batch}
+    else:
+        buckets = {"all": analysis_batch}
 
     for bucket_name, sub_batch in buckets.items():
         count = sub_batch.batch.batch_size[0]
         if count == 0:
-            print(f"[Gradient Analysis] Bucket '{bucket_name}' is empty. Skipping.")
+            print(f"[Gradient Analysis] {label} bucket '{bucket_name}' is empty. Skipping.")
             continue
         dp_size = int(getattr(trainer.config.trainer, "n_gpus_per_node", 1))
         if dp_size > 1 and count % dp_size != 0:
             new_count = count - (count % dp_size)
             if new_count == 0:
                 print(
-                    f"[Gradient Analysis] Bucket '{bucket_name}' size {count} not divisible by dp_size={dp_size}. Skipping."
+                    f"[Gradient Analysis] {label} bucket '{bucket_name}' size {count} not divisible by dp_size={dp_size}. Skipping."
                 )
                 continue
             print(
-                f"[Gradient Analysis] Bucket '{bucket_name}' size {count} not divisible by dp_size={dp_size}. Dropping to {new_count}."
+                f"[Gradient Analysis] {label} bucket '{bucket_name}' size {count} not divisible by dp_size={dp_size}. Dropping to {new_count}."
             )
             sub_batch = sub_batch.slice(0, new_count)
             count = new_count
 
-        print(f"[Gradient Analysis] Processing bucket '{bucket_name}' with {count} samples.")
+        print(f"[Gradient Analysis] Processing {label} bucket '{bucket_name}' with {count} samples.")
 
-        total_samples = batch.batch.batch_size[0]
-        metrics[f"grad_norm/{bucket_name}/sample_count"] = count
+        total_samples = analysis_batch.batch.batch_size[0]
+        metrics[f"{metric_prefix}/{bucket_name}/sample_count"] = count
         if total_samples > 0:
-            metrics[f"grad_norm/{bucket_name}/sample_pct"] = count / total_samples
+            metrics[f"{metric_prefix}/{bucket_name}/sample_pct"] = count / total_samples
 
         with _set_meta_flag(sub_batch.meta_info, "skip_optimizer_step", True), _set_meta_flag(
             sub_batch.meta_info, "grad_component_analysis", True
@@ -74,20 +90,20 @@ def run_gradient_analysis(trainer, batch, metrics):
             reward_std_min = sub_batch.batch["reward_std"].min().item()
             reward_std_max = sub_batch.batch["reward_std"].max().item()
         if reward_std_mean is not None:
-            metrics[f"grad_norm/{bucket_name}/reward_std_mean"] = reward_std_mean
+            metrics[f"{metric_prefix}/{bucket_name}/reward_std_mean"] = reward_std_mean
         if reward_std_min is not None:
-            metrics[f"grad_norm/{bucket_name}/reward_std_min"] = reward_std_min
+            metrics[f"{metric_prefix}/{bucket_name}/reward_std_min"] = reward_std_min
         if reward_std_max is not None:
-            metrics[f"grad_norm/{bucket_name}/reward_std_max"] = reward_std_max
+            metrics[f"{metric_prefix}/{bucket_name}/reward_std_max"] = reward_std_max
         if bucket_reward_std_values is not None and bucket_group_ids is not None:
-            metrics[f"grad_norm/{bucket_name}/group_rv_count"] = len(bucket_reward_std_values)
+            metrics[f"{metric_prefix}/{bucket_name}/group_rv_count"] = len(bucket_reward_std_values)
             try:
                 import wandb  # local import to avoid hard dependency if wandb disabled
 
                 table = wandb.Table(columns=["bucket", "group_id", "reward_std"])
                 for gid, rv in zip(bucket_group_ids, bucket_reward_std_values):
                     table.add_data(bucket_name, int(gid), float(rv))
-                metrics[f"grad_norm/{bucket_name}/group_rv_table"] = table
+                metrics[f"{metric_prefix}/{bucket_name}/group_rv_table"] = table
             except Exception:
                 pass
 
@@ -97,17 +113,17 @@ def run_gradient_analysis(trainer, batch, metrics):
         for k, v in bucket_metrics.items():
             if k.startswith("actor/grad_norm/"):
                 component = k.split("/", 2)[2]
-                metrics[f"grad_norm/{bucket_name}/{component}"] = v
+                metrics[f"{metric_prefix}/{bucket_name}/{component}"] = v
                 if count > 0:
-                    metrics[f"grad_norm/{bucket_name}/per_sample/{component}"] = v / count
+                    metrics[f"{metric_prefix}/{bucket_name}/per_sample/{component}"] = v / count
                 if num_tokens and num_tokens > 0:
-                    metrics[f"grad_norm/{bucket_name}/per_token/{component}"] = v / num_tokens
+                    metrics[f"{metric_prefix}/{bucket_name}/per_token/{component}"] = v / num_tokens
             elif k.startswith("actor/loss/"):
                 component = k.split("/", 2)[2]
-                metrics[f"grad_norm/{bucket_name}/loss/{component}"] = v
+                metrics[f"{metric_prefix}/{bucket_name}/loss/{component}"] = v
             else:
-                metrics[f"grad_norm/{bucket_name}/{k}"] = v
-            if bucket_name == "all":
+                metrics[f"{metric_prefix}/{bucket_name}/{k}"] = v
+            if mirror_all_to_root and bucket_name == "all":
                 metrics[k] = v
 
         kl = bucket_metrics.get("actor/loss/kl", 0)
@@ -118,7 +134,7 @@ def run_gradient_analysis(trainer, batch, metrics):
         grad_entropy = bucket_metrics.get("actor/grad_norm/entropy", 0)
         grad_kl = bucket_metrics.get("actor/grad_norm/kl", 0)
 
-        print(f"[Gradient Analysis] Bucket '{bucket_name}' Metrics:")
+        print(f"[Gradient Analysis] {label} bucket '{bucket_name}' Metrics:")
         print(f"    - KL Loss:      {kl:>10.6f}")
         print(f"    - Entropy Loss: {entropy:>10.6f}")
         print(f"    - Policy Loss:  {policy:>10.6f} (Task)")
@@ -134,3 +150,30 @@ def run_gradient_analysis(trainer, batch, metrics):
             else:
                 print(f"    - Reward Std:   mean={reward_std_mean:>10.6f}")
         print("")
+
+
+def run_gradient_analysis(trainer, batch, metrics):
+    print(f"[Gradient Analysis] Step {trainer.global_steps}: Running analysis on buckets...")
+
+    analysis_batch, prefilter_batch, analysis_rollout_filter = trainer.get_gradient_analysis_batches(batch, metrics)
+
+    _run_gradient_pass(
+        trainer,
+        prefilter_batch,
+        metrics,
+        metric_prefix="grad_norm_prefilter",
+        label="prefilter",
+        analysis_rollout_filter=analysis_rollout_filter,
+        split_into_buckets=True,
+        mirror_all_to_root=False,
+    )
+    _run_gradient_pass(
+        trainer,
+        analysis_batch,
+        metrics,
+        metric_prefix="grad_norm",
+        label="postfilter",
+        analysis_rollout_filter=analysis_rollout_filter,
+        split_into_buckets=True,
+        mirror_all_to_root=True,
+    )

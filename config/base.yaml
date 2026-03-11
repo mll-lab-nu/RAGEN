@@ -10,7 +10,7 @@ seed:
   val: 123
 
 micro_batch_size_per_gpu: 4
-log_prob_micro_batch_size_per_gpu: 4
+log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu}
 ppo_mini_batch_size: 32
 model_path: Qwen/Qwen2.5-3B-Instruct
 enable_response_mask: True # Enabling response mask could improve stability of rollout/old_log_prob, as P(st|history) are no longer calculated in loss here. See https://docs.google.com/document/d/1bg7obeiKTExuHHBl5uOiSpec5uLDZ2Tgvxy6li5pHX4/edit?usp=sharing for more details.
@@ -122,8 +122,13 @@ trainer:
   logger: [ 'console', 'wandb' ]
   max_actor_ckpt_to_keep: 1
   max_critic_ckpt_to_keep: 1
-  gradient_analysis_mode: True
+  log_group_rv_table: False
+  gradient_analysis_mode: False
   gradient_analysis_every: 50
+  gradient_analysis_env_groups: null
+  gradient_analysis_group_size: null
+  gradient_analysis_log_prefilter: False
+  gradient_analysis_only: False
   exit_after_gradient_analysis: False
 
 agent_proxy:

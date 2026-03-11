@@ -34,3 +34,6 @@ conda activate ragen
 ```bash
 bash scripts/setup_ragen_release.sh
 ```
+
+### requirements for deepcoder env
+1. pip install setuptools==68.2.2

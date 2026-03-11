@@ -19,6 +19,8 @@ For the training-side workflow and arguments, see:
 Current default training behavior from [config/base.yaml](/Users/deimos/Desktop/ICML/RAGEN/config/base.yaml):
 - `trainer.gradient_analysis_mode=True`
 - `trainer.gradient_analysis_every=50`
+- `trainer.gradient_analysis_env_groups=null`
+- `trainer.gradient_analysis_group_size=null`
 - `trainer.exit_after_gradient_analysis=False`
 
 ## Typical Workflow
@@ -29,14 +31,15 @@ Example helper runner:
 
 ```bash
 bash scripts/runs/run_sokoban_ppo_filter_grad_analysis.sh \
-  --steps 1 \
   --gpus 0,1,2,3,4,5,6,7
 ```
 
 That job:
-- runs one pre-train validation
-- runs one gradient-analysis pass on step 1
-- exits immediately after analysis
+- trains for `101` steps
+- validates before training and every `10` steps
+- runs gradient analysis at steps `1`, `51`, and `101`
+- uses a training batch of `8x16`
+- uses a separate gradient-analysis batch of `128x16`
 
 ### 2. List available analysis steps in W&B
 
