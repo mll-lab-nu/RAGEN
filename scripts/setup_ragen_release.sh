@@ -12,10 +12,13 @@ set -euo pipefail
 #
 # Optional environments (install with flags):
 #   --with-search    Search (HotpotQA) environment (~87 GB data download)
+#   --with-webshop   WebShop environment and data
 #
 # Examples:
 #   bash scripts/setup_ragen_release.sh                   # base only
 #   bash scripts/setup_ragen_release.sh --with-search     # base + search
+#   bash scripts/setup_ragen_release.sh --with-webshop    # base + webshop
+#   bash scripts/setup_ragen_release.sh --with-search --with-webshop
 
 ENV_NAME="ragen"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,9 +26,11 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Parse optional environment flags
 WITH_SEARCH=0
+WITH_WEBSHOP=0
 for arg in "$@"; do
     case "$arg" in
         --with-search)  WITH_SEARCH=1 ;;
+        --with-webshop) WITH_WEBSHOP=1 ;;
         *) echo "Unknown option: $arg"; exit 1 ;;
     esac
 done
@@ -139,6 +144,11 @@ print(f'Done! corpus.json = {len(corpus)} docs')
     echo "  CUDA_VISIBLE_DEVICES='' python scripts/retrieval/server.py --port 8001"
 }
 
+setup_webshop() {
+    print_step "Installing WebShop environment"
+    bash scripts/setup_webshop.sh
+}
+
 main() {
     ensure_conda
     validate_repo_root
@@ -181,6 +191,11 @@ main() {
     # Optional: search environment
     if [ "$WITH_SEARCH" -eq 1 ]; then
         setup_search
+    fi
+
+    # Optional: WebShop environment
+    if [ "$WITH_WEBSHOP" -eq 1 ]; then
+        setup_webshop
     fi
 
     print_step "Setup complete"

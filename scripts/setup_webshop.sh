@@ -4,7 +4,7 @@
 set -e
 
 echo "Setting up webshop..."
-echo "NOTE: please run scripts/setup_ragen.sh or scripts/setup_b200.sh before running this script"
+echo "NOTE: please run scripts/setup_ragen.sh, scripts/setup_ragen_release.sh, or scripts/setup_b200.sh before running this script"
 
 # Colors for output
 GREEN='\033[0;32m'
