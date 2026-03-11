@@ -109,7 +109,7 @@ We decompose total output entropy into two diagnostic axes:
 - **I(X; Z)** (Mutual Information): How much the output depends on the input. Low MI signals template collapse.
 - **H(Z|X)** (Conditional Entropy): Diversity of outputs for a given input. High values indicate stochastic/random outputs.
 
-<p align="center"><img src="public/collapse_types.png" width="600px" alt="Four quadrants of reasoning collapse types" /></p>
+<p align="center"><img src="public/collapse_types.png" width="900px" alt="Four quadrants of reasoning collapse types" /></p>
 <p align="center" style="font-size: 14px; max-width: 700px; margin: 0 auto;">
 Four quadrants of reasoning behavior on the Entropy (H) vs. Mutual Information (I) plane: Template Collapse (high H, low I), Low-Entropy Collapse (low H, low I), Diverse Reasoning (high H, high I), and Compressed Reasoning (low H, high I).
 </p>
@@ -118,7 +118,7 @@ Four quadrants of reasoning behavior on the Entropy (H) vs. Mutual Information (
 
 Gradient analysis reveals that RL updates decompose into a *signal* component (driven by within-prompt reward variance) and a *noise* component. When all rollouts for a prompt receive similar rewards, the signal-to-noise ratio (SNR) drops and updates become noisy, accelerating collapse. **SNR-Adaptive Filtering** discards low-variance prompts, retaining only prompts whose rollouts show meaningful reward spread.
 
-<p align="center"><img src="public/top_p.png" width="800px" alt="SNR-Adaptive Filtering pipeline" /></p>
+<p align="center"><img src="public/top_p.png" width="900px" alt="SNR-Adaptive Filtering pipeline" /></p>
 <p align="center" style="font-size: 14px; max-width: 800px; margin: 0 auto;">
 SNR-Adaptive Filtering pipeline: (1) sample rollouts per prompt and compute rewards, (2) compute within-prompt reward variance (RV), (3) rank prompts by RV cumulatively and apply a Top-P threshold — low-variance prompts are discarded to filter out noisy gradients, keeping only prompts with meaningful task signal.
 </p>
