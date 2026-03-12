@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://ragen-ai.github.io/v2"><img src="https://img.shields.io/badge/📄_v2_Paper-EA4335?style=for-the-badge&logoColor=white" alt="v2 Paper"></a>
+  <a href="https://ragen-ai.github.io/v2"><img src="https://img.shields.io/badge/📄_V2_Paper-DC143C?style=for-the-badge&logoColor=white" alt="V2 Paper"></a>
   <a href="https://arxiv.org/abs/2504.20073"><img src="https://img.shields.io/badge/📄_v1_Paper-FF8C00?style=for-the-badge&logoColor=white" alt="v1 Paper"></a>
   <a href="https://ragen-ai.github.io/"><img src="https://img.shields.io/badge/📝_HomePage-FF5722?style=for-the-badge&logoColor=white" alt="Blog"></a>
   <a href="https://ragen-doc.readthedocs.io/"><img src="https://img.shields.io/badge/📚_Documentation-4285F4?style=for-the-badge&logoColor=white" alt="Documentation"></a>
@@ -20,7 +20,7 @@
 
 ## News
 
-- **2026.3.12.** <font color="red">RAGEN V2</font> is released. A systematic study of reasoning collapse in agent RL and lightweight interventions for stable training. See the [v2 paper](https://ragen-ai.github.io/v2).
+- **2026.3.12.** <font color="#DC143C">RAGEN V2</font> is released. A systematic study of reasoning collapse in agent RL and lightweight interventions for stable training. See the [<font color="#DC143C">v2 paper</font>](https://ragen-ai.github.io/v2).
 - **2025.4.20.** RAGEN V1 [paper](https://arxiv.org/abs/2504.20073) published on arXiv.
 - **2025.1.27.** Initial RAGEN release. [Post](https://x.com/wzihanw/status/1884092805598826609).
 
@@ -37,10 +37,10 @@ RAGEN is built around **StarPO** (**S**tate-**T**hinking-**A**ctions-**R**eward 
 - **10 built-in environments.** Sokoban, FrozenLake, WebShop, DeepCoder, SearchQA, Lean, Bandit, Countdown, MetaMathQA, Sudoku.
 - **Gym-compatible interface.** Easy to add custom environments.
 
-**<font color="red">RAGEN V2</font> additionally introduces:**
+**<font color="#DC143C">RAGEN V2</font> additionally introduces:**
 
-- **SNR-Adaptive Filtering (<font color="red">V2</font>).** Lightweight rollout filtering based on reward variance to mitigate noisy gradient updates.
-- **Reasoning collapse diagnostics (<font color="red">V2</font>).** Mutual information proxy metrics to detect and monitor template collapse during training.
+- **SNR-Adaptive Filtering (<font color="#DC143C">V2</font>).** Lightweight rollout filtering based on reward variance to mitigate noisy gradient updates.
+- **Reasoning collapse diagnostics (<font color="#DC143C">V2</font>).** Mutual information proxy metrics to detect and monitor template collapse during training.
 
 
 ## Algorithm
@@ -60,9 +60,9 @@ The StarPO (State-Thinking-Action-Reward Policy Optimization) framework with two
 - **PPO.** Token-level advantage estimation via a value function over trajectories.
 - **GRPO.** Normalized reward assigned to the full trajectory.
 
-### <font color="red">V2</font>: Diagnosing Template Collapse
+### <font color="#DC143C">V2</font>: Diagnosing Template Collapse
 
-Entropy alone cannot detect *template collapse*, where reasoning appears diverse within a single input but becomes input-agnostic across inputs. <font color="red">RAGEN V2</font> decomposes reasoning quality into two axes:
+Entropy alone cannot detect *template collapse*, where reasoning appears diverse within a single input but becomes input-agnostic across inputs. <font color="#DC143C">RAGEN V2</font> decomposes reasoning quality into two axes:
 - **Within-input diversity:** Conditional Entropy H(Z|X)
 - **Cross-input distinguishability:** Mutual Information I(X;Z)
 
@@ -71,7 +71,7 @@ SNR-Adaptive Filtering uses reward variance as a lightweight proxy to select hig
 
 ## Update Log
 
-**2026.3.12.** <font color="red">RAGEN V2</font> is released. See [v2 paper](https://ragen-ai.github.io/v2).
+**2026.3.12.** <font color="#DC143C">RAGEN V2</font> is released. See [<font color="#DC143C">v2 paper</font>](https://ragen-ai.github.io/v2).
 
 <details>
 <summary>Older updates</summary>
@@ -104,7 +104,7 @@ Use `bash scripts/setup_ragen.sh --with-search` to include the search environmen
 
 ### The Four Reasoning Regimes
 
-<font color="red">RAGEN V2</font> diagnoses agent behavior along two axes — **within-input diversity** (Conditional Entropy) and **cross-input distinguishability** (Mutual Information) — yielding four distinct reasoning regimes:
+<font color="#DC143C">RAGEN V2</font> diagnoses agent behavior along two axes — **within-input diversity** (Conditional Entropy) and **cross-input distinguishability** (Mutual Information) — yielding four distinct reasoning regimes:
 
 <p align="center"><img src="public/teaser.png" width="800px" alt="Four reasoning regimes: diverse reasoning, template collapse, compressed reasoning, low-entropy collapse" /></p>
 <p align="center" style="font-size: 15px; max-width: 800px; margin: 0 auto;">
@@ -116,7 +116,7 @@ Use `bash scripts/setup_ragen.sh --with-search` to include the search environmen
 python train.py --config-name _2_sokoban
 ```
 
-**Train with SNR-Adaptive Filtering (<font color="red">V2</font>, Top-p):**
+**Train with SNR-Adaptive Filtering (<font color="#DC143C">V2</font>, Top-p):**
 ```bash
 python train.py --config-name _2_sokoban \
   actor_rollout_ref.rollout_filter_strategy=top_p \
@@ -132,7 +132,7 @@ See the [Rollout Filtering Guide](docs/guide_rollout_filtering.md) for more filt
 
 ## Roadmap
 
-- [ ] Updated full documentation for <font color="red">RAGEN V2</font>
+- [ ] Updated full documentation for <font color="#DC143C">RAGEN V2</font>
 - [ ] Expanded environment suite and multi-task benchmarks
 - [ ] Extended MI diagnostic visualizations in WandB dashboard
 - [ ] Multi-modal agent support (building on [VAGEN](https://github.com/RAGEN-AI/VAGEN))
@@ -171,7 +171,7 @@ See the [Rollout Filtering Guide](docs/guide_rollout_filtering.md) for more filt
 
 We thank the [DeepSeek](https://github.com/deepseek-ai/DeepSeek-R1) team for early conceptual inspirations. We are grateful to the [veRL](https://github.com/volcengine/verl) team for infrastructure support. We thank the [TinyZero](https://github.com/Jiayi-Pan/TinyZero) team for discoveries that informed our initial exploration. We appreciate insightful discussions with Han Liu, Xinyu Xing, Li Erran Li, John Schulman, Akari Asai, Eiso Kant, Lu Lu, Runxin Xu, Huajian Xin, Zijun Liu, Weiyi Liu, Weimin Wu, Yibo Wen, Jiarui Liu, Lorenzo Xiao, Ishan Mukherjee, Anabella Isaro, Haosen Sun, How-Yeh Wan, Lester Xue, Matthew Khoriaty, Haoxiang Sun, Jiajun Liu.
 
-For <font color="red">RAGEN V2</font>, we additionally thank Yuxiang Lin and Kyunghyun Cho for their support.
+For <font color="#DC143C">RAGEN V2</font>, we additionally thank Yuxiang Lin and Kyunghyun Cho for their support.
 
 
 ## Star History
@@ -183,7 +183,7 @@ For <font color="red">RAGEN V2</font>, we additionally thank Yuxiang Lin and Kyu
 
 ```bibtex
 @misc{ragen-v2,
-      title={RAGEN-v2: Understanding Reasoning Collapse in LLM Agent Reinforcement Learning},
+      title={RAGEN-V2: Understanding Reasoning Collapse in LLM Agent Reinforcement Learning},
       author={Zihan Wang and Chi Gui and Xing Jin and Qineng Wang and Licheng Liu and Kangrui Wang and Shiqi Chen and Linjie Li and Zhengyuan Yang and Pingyue Zhang and Yiping Lu and Jiajun Wu and Li Fei-Fei and Lijuan Wang and Yejin Choi and Manling Li},
       year={2026},
       url={https://ragen-ai.github.io/v2},
