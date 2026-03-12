@@ -4,6 +4,14 @@ This note only covers the four common settings used in current RAGEN runs.
 
 Relevant config keys live under `actor_rollout_ref.rollout` in [config/base.yaml](../config/base.yaml).
 
+## Quick Recommendation
+
+- want no filtering: `top_p=1.0`, `include_zero=True`
+- want the old top-p behavior: `top_p_prob_mode=softmax`, `include_zero=False`, start with `top_p=0.9`
+- want the new stricter RV filter: `top_p_prob_mode=linear`, `include_zero=False`, start with `top_p=0.9`, `eps=0.01`
+- want the new Top-k setup: `strategy=top_k`, `value=0.25`, `type=largest`, `include_zero=True`
+
+
 ## 1. No Filter
 
 Use this when you want true no-filter behavior.
@@ -135,13 +143,6 @@ How to choose `rollout_filter_value`:
 - smaller values: more aggressive filtering
 - use `largest` for the standard "keep best groups" setup
 - use `smallest` only when you intentionally want the reverse selection
-
-## Quick Recommendation
-
-- want no filtering: `top_p=1.0`, `include_zero=True`
-- want the old top-p behavior: `top_p_prob_mode=softmax`, `include_zero=False`, start with `top_p=0.9`
-- want the new stricter RV filter: `top_p_prob_mode=linear`, `include_zero=False`, start with `top_p=0.9`, `eps=0.01`
-- want the new Top-k setup: `strategy=top_k`, `value=0.25`, `type=largest`, `include_zero=True`
 
 ## Code References
 
