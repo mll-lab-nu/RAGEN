@@ -1,6 +1,10 @@
 """
 Search environment for HotpotQA-style multi-hop question answering.
-Migrated from rllm's ToolEnvironment + search example.
+
+This code is adapted from the RLLM project:
+  https://github.com/rllm-org/rllm
+  Original source: rllm/examples/search/ (ToolEnvironment + search example)
+  License: Apache-2.0
 
 Architecture follows RAGEN's WebShop pattern:
 - Inherits BaseLanguageBasedEnv + gym.Env

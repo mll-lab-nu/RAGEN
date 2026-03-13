@@ -3,6 +3,10 @@
 Dense-only retrieval server for Search training.
 Provides E5 embeddings + FAISS dense indexing.
 
+This code is adapted from the RLLM project:
+  https://github.com/rllm-org/rllm
+  License: Apache-2.0
+
 Usage:
     python server.py --data_dir ./search_data/prebuilt_indices --port 8000
 """

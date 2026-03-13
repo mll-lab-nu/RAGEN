@@ -1,6 +1,10 @@
 """
 Retrieval client for connecting to the dense retrieval server.
-Simplified from rllm/examples/search/local_retrieval_tool.py.
+
+This code is adapted from the RLLM project:
+  https://github.com/rllm-org/rllm
+  Original source: rllm/examples/search/local_retrieval_tool.py
+  License: Apache-2.0
 
 The retrieval server (scripts/retrieval/server.py) must be running before use.
 Uses `requests` instead of rllm's `httpx` to minimize new dependencies.

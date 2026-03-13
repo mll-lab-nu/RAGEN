@@ -1,6 +1,12 @@
 """
 Search reward function for HotpotQA-style question answering.
-Migrated from rllm/rewards/search_reward.py, with rllm-specific dependencies removed.
+
+This code is adapted from the RLLM project:
+  https://github.com/rllm-org/rllm
+  Original source: rllm/rewards/search_reward.py
+  License: Apache-2.0
+
+RLLM-specific dependencies have been removed.
 
 Evaluation uses:
 - Exact Match (EM): normalized string comparison
