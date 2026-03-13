@@ -4,7 +4,9 @@ import yaml
 import re
 from typing import List, Any
 
-def load_config(config_file: str, params: List[str] = []):
+def load_config(config_file: str, params: List[str] = None):
+    if params is None:
+        params = []
     assert os.path.exists(config_file), f"Invalid config file: {config_file}"
     with open(config_file) as reader:
         config = yaml.safe_load(reader)
