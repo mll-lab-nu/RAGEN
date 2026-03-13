@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""
+Download Wikipedia corpus and FAISS index for the search environment.
+
+This code is adapted from the RLLM project:
+  https://github.com/rllm-org/rllm
+  License: Apache-2.0
+"""
 
 import argparse
 import gzip
