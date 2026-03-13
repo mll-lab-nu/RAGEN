@@ -1,5 +1,9 @@
 """
 Configuration for the Search (HotpotQA) environment.
+
+The search environment is adapted from the RLLM project:
+  https://github.com/rllm-org/rllm
+  License: Apache-2.0
 """
 
 from dataclasses import dataclass

@@ -114,3 +114,7 @@ es_manager:
 ```
 
 Note: when using `top_k` filtering with a small value (e.g., 0.25), the effective batch size after filtering is `env_groups × group_size × filter_value`. Ensure `ppo_mini_batch_size` does not exceed this value, or training will fail with an assertion error.
+
+## Acknowledgment
+
+The search environment is adapted from the [RLLM](https://github.com/rllm-org/rllm) project. We thank the RLLM authors for their open-source contributions.
