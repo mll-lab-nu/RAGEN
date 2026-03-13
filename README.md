@@ -20,7 +20,7 @@
 
 ## News
 
-- **2026.3.12.** <font color="#DC143C">RAGEN V2</font> is released. A systematic study of reasoning collapse in agent RL and lightweight interventions for stable training. See the [<font color="#DC143C">v2 paper</font>](https://ragen-ai.github.io/v2).
+- **2026.3.12.** We are excited to release <font color="#DC143C">RAGEN V2</font>! We introduce a systematic study of reasoning collapse in agent RL and lightweight interventions for stable training. See the [<font color="#DC143C">v2 paper</font>](https://ragen-ai.github.io/v2).
 - **2025.4.20.** RAGEN V1 [paper](https://arxiv.org/abs/2504.20073) published on arXiv.
 - **2025.1.27.** Initial RAGEN release. [Post](https://x.com/wzihanw/status/1884092805598826609).
 
@@ -71,7 +71,7 @@ SNR-Adaptive Filtering uses reward variance as a lightweight proxy to select hig
 
 ## Update Log
 
-**2026.3.12.** <font color="#DC143C">RAGEN V2</font> is released. See [<font color="#DC143C">v2 paper</font>](https://ragen-ai.github.io/v2).
+**2026.3.12.** <font color="#DC143C">RAGEN V2</font> is released! Check out our [<font color="#DC143C">v2 paper</font>](https://ragen-ai.github.io/v2).
 
 <details>
 <summary>Older updates</summary>
