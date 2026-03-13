@@ -108,7 +108,7 @@ algorithm:
     kl_coef: 0.000
 
 trainer:
-  project_name: ragen_profiling
+  project_name: ragen
   experiment_name: test
   local_log_dir: "results/"
   save_freq: 100
