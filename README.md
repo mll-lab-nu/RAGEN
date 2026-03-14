@@ -4,7 +4,8 @@
 <p align="center"><img src="public/ragen_logo.jpeg" width="300px" alt="RAGEN icon" /></p>
 
 <p align="center">
-  <strong>RAGEN</strong> (<b>R</b>easoning <b>AGEN</b>t, pronounced like "reagent") is a flexible RL framework for training reasoning agents in interactive environments — and a <strong>diagnostic platform to identify, understand, and fix agent failure modes during RL training</strong>.
+  <strong>RAGEN</strong> (<b>R</b>easoning <b>AGEN</b>t, pronounced like "reagent") is a flexible RL framework for training reasoning agents.
+  RAGEN serves as a <strong>diagnostic platform to understand agent training</strong>, equipping practitioners with metrics and tools to see <strong>why</strong> training goes well or not, and how to fix it.
 </p>
 
 <p align="center">
@@ -26,8 +27,6 @@
 
 
 ## About
-
-**RAGEN** (**R**easoning **AGEN**t, pronounced like "reagent") is a flexible RL framework for training reasoning agents in interactive environments. Beyond training, RAGEN serves as a **diagnostic platform to identify and understand agent failure modes** — equipping practitioners with metrics and tools to see *why* training goes wrong and how to fix it.
 
 RAGEN is built around **StarPO** (**S**tate-**T**hinking-**A**ctions-**R**eward **P**olicy **O**ptimization), a unified RL framework for training multi-turn, trajectory-level agents with flexible control over reasoning processes, reward assignment mechanisms, and prompt-rollout structures.
 
