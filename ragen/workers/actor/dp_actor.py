@@ -38,6 +38,8 @@ from verl.workers.actor import BasePPOActor
 
 from peft import PeftModel
 
+from ragen.trainer.pending_batch import get_pending_seq_mean_scale
+
 
 __all__ = ["DataParallelPPOActor"]
 
@@ -268,6 +270,8 @@ class DataParallelPPOActor(BasePPOActor):
         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
 
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages", "response_mask"]
+        if "pending_mask" in data.batch.keys():
+            select_keys.append("pending_mask")
         if self.config.use_kl_loss:
             select_keys.append("ref_log_prob")
         batch = data.select(batch_keys=select_keys).batch
@@ -325,6 +329,7 @@ class DataParallelPPOActor(BasePPOActor):
                             # response_mask = attention_mask[:, -response_length:]
                             old_log_prob = data["old_log_probs"]
                             advantages = data["advantages"]
+                            pending_mask = data.get("pending_mask", None)
 
                             clip_ratio = self.config.clip_ratio
                             clip_ratio_low = self.config.clip_ratio_low if self.config.clip_ratio_low is not None else clip_ratio
@@ -347,10 +352,17 @@ class DataParallelPPOActor(BasePPOActor):
                                 clip_ratio_c=clip_ratio_c,
                                 loss_agg_mode=loss_agg_mode,
                             )
+                            seq_loss_scale = get_pending_seq_mean_scale(
+                                pending_mask=pending_mask,
+                                loss_agg_mode=loss_agg_mode,
+                                configured_mini_batch_size=self.config.ppo_mini_batch_size,
+                            )
+                            pg_loss = pg_loss * seq_loss_scale
 
                             entropy_term = None
                             if entropy_coeff != 0:
                                 entropy_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
+                                entropy_loss = entropy_loss * seq_loss_scale
                                 entropy_term = -entropy_loss * entropy_coeff
 
                             kl_term = None
@@ -359,6 +371,7 @@ class DataParallelPPOActor(BasePPOActor):
                                 # compute kl loss
                                 kld = kl_penalty(logprob=log_prob, ref_logprob=ref_log_prob, kl_penalty=self.config.kl_loss_type)
                                 kl_loss = agg_loss(loss_mat=kld, loss_mask=response_mask, loss_agg_mode=self.config.loss_agg_mode)
+                                kl_loss = kl_loss * seq_loss_scale
                                 kl_term = kl_loss * self.config.kl_loss_coef
 
                             if component == "task":
@@ -413,6 +426,7 @@ class DataParallelPPOActor(BasePPOActor):
                         # response_mask = attention_mask[:, -response_length:]
                         old_log_prob = data["old_log_probs"]
                         advantages = data["advantages"]
+                        pending_mask = data.get("pending_mask", None)
 
                         clip_ratio = self.config.clip_ratio
                         clip_ratio_low = self.config.clip_ratio_low if self.config.clip_ratio_low is not None else clip_ratio
@@ -438,9 +452,16 @@ class DataParallelPPOActor(BasePPOActor):
                             clip_ratio_c=clip_ratio_c,
                             loss_agg_mode=loss_agg_mode,
                         )
+                        seq_loss_scale = get_pending_seq_mean_scale(
+                            pending_mask=pending_mask,
+                            loss_agg_mode=loss_agg_mode,
+                            configured_mini_batch_size=self.config.ppo_mini_batch_size,
+                        )
+                        pg_loss = pg_loss * seq_loss_scale
 
                         if entropy_coeff != 0:
                             entropy_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
+                            entropy_loss = entropy_loss * seq_loss_scale
 
                             # compute policy loss
                             policy_loss = pg_loss - entropy_loss * entropy_coeff
@@ -452,6 +473,7 @@ class DataParallelPPOActor(BasePPOActor):
                             # compute kl loss
                             kld = kl_penalty(logprob=log_prob, ref_logprob=ref_log_prob, kl_penalty=self.config.kl_loss_type)
                             kl_loss = agg_loss(loss_mat=kld, loss_mask=response_mask, loss_agg_mode=self.config.loss_agg_mode)
+                            kl_loss = kl_loss * seq_loss_scale
 
                             policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef
                             metrics["actor/kl_loss"] = kl_loss.detach().item()

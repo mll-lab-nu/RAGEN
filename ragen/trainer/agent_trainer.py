@@ -3,6 +3,7 @@ FSDP PPO Trainer with Ray-based single controller.
 Adapted from the excellently written verl implementation.
 """
 
+import math
 import os
 import uuid
 import ray
@@ -52,6 +53,7 @@ from verl.utils.torch_functional import masked_mean
 
 from ragen.llm_agent.agent_proxy import LLMAgentProxy
 from ragen.utils import GenerationsLogger
+from ragen.trainer.pending_batch import build_pending_training_batch
 from ragen.trainer.rollout_filter import build_rollout_filter
 from ragen.trainer.collapse_metrics import CollapseDetector
 from ragen.trainer.gradient_reporter import run_gradient_analysis
@@ -135,6 +137,15 @@ def adjust_batch(batch: DataProto, size_divisor: int, mode: str = "copy") -> Dat
         raise ValueError(f"Unsupported mode: {mode}. Use 'copy' or 'delete'.")
 
     return adjusted_batch
+
+
+def _normalize_batch_adjust_mode(mode: str, *, allow_pending: bool) -> str:
+    valid_modes = {"copy", "delete", "pending"}
+    if mode not in valid_modes:
+        raise ValueError(f"Unsupported batch_adjust_mode: {mode}. Use one of {sorted(valid_modes)}.")
+    if mode == "pending" and not allow_pending:
+        return "copy"
+    return mode
 
 
 def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1, multi_turn=False, norm_adv_by_std_in_grpo=True, bi_level_gae=False, high_level_gamma=1.0, soft_advantage_reweight=False):
@@ -733,7 +744,10 @@ class RayAgentTrainer(VerlRayPPOTrainer):
         ppo_mini_batch_size = self.config.actor_rollout_ref.actor.ppo_mini_batch_size
         n_gpus = self.config.trainer.n_gpus_per_node
         size_divisor = np.lcm.reduce([source_env_groups, ppo_mini_batch_size, n_gpus])
-        adjust_mode = getattr(self.config.agent_proxy, "batch_adjust_mode", "copy")
+        adjust_mode = _normalize_batch_adjust_mode(
+            getattr(self.config.agent_proxy, "batch_adjust_mode", "copy"),
+            allow_pending=False,
+        )
         batch = adjust_batch(batch, size_divisor, mode=adjust_mode)
         if metrics is not None and metrics_prefix is not None:
             metrics[f"{metrics_prefix}/adjusted_batch_size"] = batch.batch["input_ids"].shape[0]
@@ -1187,20 +1201,21 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
                 self.consecutive_empty_filtered_steps = 0
 
-                # Adjust batch size to be divisible by num_groups, ppo_mini_batch_size, and n_gpus
+                # copy/delete modes adjust the real batch early; pending mode pads only the optimizer batch later
                 num_groups = self.config.es_manager.train.env_groups
                 ppo_mini_batch_size = self.config.actor_rollout_ref.actor.ppo_mini_batch_size
                 n_gpus = self.config.trainer.n_gpus_per_node
-                size_divisor = np.lcm.reduce([num_groups, ppo_mini_batch_size, n_gpus])
-                adjust_mode = getattr(self.config.agent_proxy, "batch_adjust_mode", "copy")
-                batch = adjust_batch(batch, size_divisor, mode=adjust_mode)
+                adjust_mode = _normalize_batch_adjust_mode(
+                    getattr(self.config.agent_proxy, "batch_adjust_mode", "copy"),
+                    allow_pending=True,
+                )
+                real_batch_size = batch.batch["input_ids"].shape[0]
+                if adjust_mode in ("copy", "delete"):
+                    size_divisor = np.lcm.reduce([num_groups, ppo_mini_batch_size, n_gpus])
+                    batch = adjust_batch(batch, size_divisor, mode=adjust_mode)
 
-                # Record batch and mini-batch statistics
-                batch_size = batch.batch["input_ids"].shape[0]
-                num_mini_batches = batch_size // ppo_mini_batch_size
                 metrics.update({
-                    "train/batch_size": batch_size,
-                    "train/num_mini_batches": num_mini_batches,
+                    "train/real_batch_size": real_batch_size,
                     "train/rollout_attempts": attempts,
                     "rollout/empty_after_filter": 0.0,
                     "rollout/consecutive_empty_after_filter_steps": 0.0,
@@ -1422,10 +1437,24 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 gradient_analysis_only = bool(self.config.trainer.get("gradient_analysis_only", False))
                 metrics["trainer/gradient_analysis_only"] = float(gradient_analysis_only)
 
+                training_batch = batch
+                pending_count = 0
+                if adjust_mode == "pending" and not gradient_analysis_only:
+                    training_batch, pending_count = build_pending_training_batch(batch, ppo_mini_batch_size)
+
+                optimizer_batch_size = training_batch.batch["input_ids"].shape[0]
+                metrics.update({
+                    "train/batch_size": optimizer_batch_size,
+                    "train/optimizer_batch_size": optimizer_batch_size,
+                    "train/pending_count": pending_count,
+                    "train/pending_ratio": (pending_count / optimizer_batch_size) if optimizer_batch_size > 0 else 0.0,
+                    "train/num_mini_batches": math.ceil(optimizer_batch_size / ppo_mini_batch_size),
+                })
+
                 # update critic
                 if self.use_critic and not gradient_analysis_only:
                     with marked_timer("update_critic", timing_raw, color="pink"):
-                        critic_output = self.critic_wg.update_critic(batch)
+                        critic_output = self.critic_wg.update_critic(training_batch)
                     critic_output_metrics = reduce_metrics(critic_output.meta_info["metrics"])
                     metrics.update(critic_output_metrics)
                 elif self.use_critic and gradient_analysis_only:
@@ -1448,8 +1477,8 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                     # update actor
                     if not gradient_analysis_only:
                         with marked_timer("update_actor", timing_raw):
-                            batch.meta_info["multi_turn"] = True
-                            actor_output = self.actor_rollout_wg.update_actor(batch)
+                            training_batch.meta_info["multi_turn"] = True
+                            actor_output = self.actor_rollout_wg.update_actor(training_batch)
                             actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                             metrics.update(actor_output_metrics)
                     else:
