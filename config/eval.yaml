@@ -2,6 +2,10 @@ defaults:
   - envs
   - base
 
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
 system:
   CUDA_VISIBLE_DEVICES: "0"
 
@@ -25,7 +29,7 @@ actor_rollout_ref:
     target_modules: ${lora.target_modules}
   rollout:
     name: vllm
-    log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu}
+    log_prob_micro_batch_size_per_gpu: 64
     tensor_model_parallel_size: 1
     dtype: bfloat16
     max_model_len: 3600
@@ -62,13 +66,13 @@ es_manager:
     env_groups: 8
     group_size: 16
     env_configs:
-      tags: ["Spatial"]
+      tags: ["CoordSokoban"]
       n_groups: [8]
   val:
     env_groups: 32
     group_size: 16
     env_configs:
-      tags: ["Spatial"]
+      tags: ["CoordSokoban"]
       n_groups: [32]
 
 ctx_manager:

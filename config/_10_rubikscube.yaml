@@ -1,0 +1,25 @@
+defaults:
+  - base
+
+trainer:
+  experiment_name: rubikscube
+
+actor_rollout_ref:
+  rollout:
+    response_length: 500
+    val_kwargs:
+      do_sample: True
+      temperature: 0.5 
+ 
+agent_proxy:
+  max_turn: 25
+  max_actions_per_turn: 4
+  max_context_window: 5
+
+es_manager:
+  train:
+    env_configs:
+      tags: ["rubikscube"]
+  val:
+    env_configs:
+      tags: ["rubikscube"]

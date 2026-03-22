@@ -1,6 +1,7 @@
 from ragen.env.base import BaseLanguageBasedEnv
 from ragen.env.webshop.config import WebShopEnvConfig
 from webshop_minimal import WebAgentTextEnv, init_basedir
+from webshop_minimal.engine import parse_action
 from typing import Optional, Union
 from ragen.utils import all_seed
 import random
@@ -15,7 +16,7 @@ RENDER_INSTRUCTIONS = [
     "Never search for more than 2 times.",
     "Do not be too strict about the description, it's more important to buy one that is close enough within action limit.",
     "Prioritize click a product in the current page over going to next page.",
-    "Almost never click[next >] for more than 2 times."
+    "Almost never click[next >] for more than 2 times.",
     "Almost never click[< prev] unless you are sure the product is on one of the previous pages.",
     "If you have less than 3 actions left, just buy the first product you see in the current page.",
     "If an matching option exists, make sure to click[size] then click[color], one at a time, before click[buy now], but don't have to if only 1 action left, in that case you just click[buy now]. Never click description."
@@ -113,14 +114,29 @@ class WebShopEnv(BaseLanguageBasedEnv, WebAgentTextEnv):
         """
         Take an action in the environment and return the next observation, reward, done, and info.
         """
-        action_is_valid = action in self.get_available_actions() or ("search[<content>]" in self.get_available_actions() and action.startswith('search[') and action.endswith(']'))
+        orig_available_actions = WebAgentTextEnv.get_available_actions(self)
+        action_name, action_arg = parse_action(action)
+        if action_arg is not None:
+            action_arg = action_arg.lower()
+        action_is_valid = (
+            action_name == "search"
+            and orig_available_actions["has_search_bar"]
+            and action_arg is not None
+            and action_arg != ""
+        ) or (
+            action_name == "click"
+            and action_arg in orig_available_actions["clickables"]
+            and action_arg != "search"
+        )
         last_observation = self.observation
-        state, reward, done, info = WebAgentTextEnv.step(self, action)
+        state, raw_reward, done, info = WebAgentTextEnv.step(self, action)
+        reward = 1.0 if raw_reward >= 1.0 else 0.0
         self.prepare_render_cache(self.observation)
             
         info = (info or {}).copy()
         info.update({
             "reward": reward,
+            "raw_reward": raw_reward,
             "action_is_effective": self.observation != last_observation,
             "action_is_valid": action_is_valid,
             "success": 1 if reward == 1 else 0,

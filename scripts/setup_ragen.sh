@@ -1,158 +1,193 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# Exit on error
-set -e
+set -euo pipefail
 
-# Function to check if CUDA is available
-check_cuda() {
-    if command -v nvidia-smi &> /dev/null; then
-        echo "CUDA GPU detected"
-        return 0
-    else
-        echo "No CUDA GPU detected"
-        return 1
-    fi
-}
+# Environment setup script for the RAGEN environment.
+#
+# Validation:
+# - Verified on NVIDIA H100, H200, and B200.
+#
+# Environment coverage:
+# - Supports bandit, sokoban, frozenlake, metamathqa, countdown, deepcoder
+#
+# Optional environments (install with flags):
+#   --with-search    Search (HotpotQA) environment (~87 GB data download)
+#
+# Examples:
+#   bash scripts/setup_ragen.sh                   # base only
+#   bash scripts/setup_ragen.sh --with-search     # base + search
 
-# Function to check if conda is available
-check_conda() {
-    if command -v conda &> /dev/null; then
-        echo "Conda is available"
-        return 0
-    else
-        echo "Conda is not installed. Please install Conda first."
-        return 1
-    fi
-}
+ENV_NAME="ragen"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Parse optional environment flags
+WITH_SEARCH=0
+for arg in "$@"; do
+    case "$arg" in
+        --with-search)  WITH_SEARCH=1 ;;
+        *) echo "Unknown option: $arg"; exit 1 ;;
+    esac
+done
 
-# Print step with color
 print_step() {
-    echo -e "${BLUE}[Step] ${1}${NC}"
+    echo
+    echo "[setup_ragen] $1"
 }
 
-# Main installation process
-main() {
-    # Check prerequisites
-    check_conda || exit 1
-    
-    # Create and activate conda environment
-    # if not exists, create it
-    if ! conda env list | grep -q "ragen"; then
-        print_step "Creating conda environment 'ragen' with Python 3.12..."
-        conda create -n ragen python=3.12 -y
-    else
-        print_step "Conda environment 'ragen' already exists"
+ensure_conda() {
+    if ! command -v conda >/dev/null 2>&1; then
+        echo "conda is required but was not found in PATH." >&2
+        exit 1
     fi
-    
-    # Need to source conda for script environment
     eval "$(conda shell.bash hook)"
-    conda activate ragen
-
-    pip install -U pip setuptools wheel
-    pip install numpy ninja packaging psutil
-
-    # Install package in editable mode
-    print_step "setting up verl..."
-    git submodule init
-    git submodule update
-    cd verl
-    pip install -e . --no-dependencies # we put dependencies in requirements.txt
-    cd ..
-    
-    # Install package in editable mode
-    print_step "Installing ragen package..."
-    pip install -e .
-
-    # Install spatial environment dependencies
-    print_step "Installing spatial environment dependencies..."
-    pip install -e ragen/env/spatial/Base
-    
-    # Install PyTorch with CUDA if available
-    if check_cuda; then
-        print_step "CUDA detected, checking CUDA version..."
-        
-        if command -v nvcc &> /dev/null; then
-            nvcc_version=$(nvcc --version | grep "release" | awk '{print $6}' | cut -c2-)
-            nvcc_major=$(echo $nvcc_version | cut -d. -f1)
-            nvcc_minor=$(echo $nvcc_version | cut -d. -f2)
-            
-            print_step "Found NVCC version: $nvcc_version"
-            
-            if [[ "$nvcc_major" -gt 12 || ("$nvcc_major" -eq 12 && "$nvcc_minor" -ge 1) ]]; then
-                print_step "CUDA $nvcc_version is already installed and meets requirements (>=12.4)"
-                export CUDA_HOME=${CUDA_HOME:-$(dirname $(dirname $(which nvcc)))}
-            else
-                print_step "CUDA version < 12.4, installing CUDA toolkit 12.4..."
-                conda install -c "nvidia/label/cuda-12.4.0" cuda-toolkit -y
-                export CUDA_HOME=$CONDA_PREFIX
-            fi
-        else
-            print_step "NVCC not found, installing CUDA toolkit 12.4..."
-            conda install -c "nvidia/label/cuda-12.4.0" cuda-toolkit -y
-            export CUDA_HOME=$CONDA_PREFIX
-        fi
-        
-        print_step "Installing PyTorch with CUDA support..."
-        pip install torch==2.5.0 --index-url https://download.pytorch.org/whl/cu124
-        
-        print_step "Installing flash-attention..."
-        pip3 install flash-attn==2.7.4.post1 --no-build-isolation
-    else
-        print_step "Installing PyTorch without CUDA support..."
-        pip install torch==2.5.0
-    fi
-    
-    # Install remaining requirements
-    print_step "Installing additional requirements..."
-    pip install -r requirements.txt
-
-    print_step "Downloading data..."
-    python scripts/download_data.py
-
-    echo -e "${GREEN}Installation completed successfully!${NC}"
-    echo "To activate the environment, run: conda activate ragen"
-    
-    # export CMAKE_POLICY_VERSION_MINIMUM=3.5 && pip install alfworld[full]
-    # alfworld-download
-
-    # installing webshop
-    print_step "Installing webshop dependencies..."
-    conda install -c pytorch faiss-cpu -y
-    sudo apt update
-    sudo apt install default-jdk -y
-    conda install -c conda-forge openjdk=21 maven -y
-
-    # Install remaining requirements
-    print_step "Installing additional requirements..."
-    pip install -r requirements.txt
-
-    # webshop installation, model loading
-    pip install -e external/webshop-minimal/ --no-dependencies
-    python -m spacy download en_core_web_sm
-    python -m spacy download en_core_web_lg
-
-    print_step "Downloading data..."
-    python scripts/download_data.py
-
-    # Optional: download full data set
-    print_step "Downloading full data set..."
-    conda install conda-forge::gdown
-    mkdir -p external/webshop-minimal/webshop_minimal/data/full
-    cd external/webshop-minimal/webshop_minimal/data/full
-    gdown https://drive.google.com/uc?id=1A2whVgOO0euk5O13n2iYDM0bQRkkRduB # items_shuffle
-    gdown https://drive.google.com/uc?id=1s2j6NgHljiZzQNL3veZaAiyW_qDEgBNi # items_ins_v2
-    cd ../../../../..
-
-    echo -e "${GREEN}Installation completed successfully!${NC}"
-    echo "To activate the environment, run: conda activate ragen"
-
-
 }
 
-# Run main installation
-main
+validate_repo_root() {
+    if [[ ! -d "${PROJECT_ROOT}/verl" ]]; then
+        echo "Could not find the RAGEN repository root from ${SCRIPT_DIR}." >&2
+        exit 1
+    fi
+}
+
+ensure_env() {
+    if ! conda env list | awk '{print $1}' | grep -qx "${ENV_NAME}"; then
+        print_step "Creating conda environment ${ENV_NAME} with Python 3.12"
+        conda create -n "${ENV_NAME}" python=3.12 -y
+    else
+        print_step "Using existing conda environment ${ENV_NAME}"
+    fi
+
+    print_step "Activating conda environment ${ENV_NAME}"
+    conda activate "${ENV_NAME}"
+}
+
+setup_search() {
+    print_step "Installing search environment dependencies..."
+    pip install sentence-transformers flask
+
+    local DATA_DIR="./search_data"
+    local INDICES_DIR="${DATA_DIR}/prebuilt_indices"
+    local WIKI_DIR="${DATA_DIR}/wikipedia"
+
+    print_step "Downloading search index data (wiki corpus + FAISS index shards, ~87 GB)..."
+    python scripts/download_search_index.py --data_dir "$DATA_DIR"
+
+    # Merge FAISS index shards
+    local INDEX_FILE="${INDICES_DIR}/e5_Flat.index"
+    if [ -f "$INDEX_FILE" ]; then
+        echo "e5_Flat.index already exists ($(du -h "$INDEX_FILE" | cut -f1))"
+    else
+        print_step "Merging index shards -> e5_Flat.index..."
+        if [ -f "${INDICES_DIR}/part_aa" ] && [ -f "${INDICES_DIR}/part_ab" ]; then
+            cat "${INDICES_DIR}/part_aa" "${INDICES_DIR}/part_ab" > "$INDEX_FILE"
+            rm -f "${INDICES_DIR}/part_aa" "${INDICES_DIR}/part_ab"
+            echo "Created e5_Flat.index ($(du -h "$INDEX_FILE" | cut -f1))"
+        else
+            echo "ERROR: Index shards not found in ${INDICES_DIR}" >&2
+            exit 1
+        fi
+    fi
+
+    # Convert wiki-18.jsonl -> corpus.json
+    local CORPUS_FILE="${INDICES_DIR}/corpus.json"
+    local WIKI_JSONL="${WIKI_DIR}/wiki-18.jsonl"
+
+    if [ -f "$CORPUS_FILE" ]; then
+        echo "corpus.json already exists ($(du -h "$CORPUS_FILE" | cut -f1))"
+    else
+        print_step "Converting wiki-18.jsonl -> corpus.json..."
+        if [ ! -f "$WIKI_JSONL" ]; then
+            echo "ERROR: ${WIKI_JSONL} not found" >&2
+            exit 1
+        fi
+        python3 -c "
+import json
+from tqdm import tqdm
+
+input_path = '${WIKI_JSONL}'
+output_path = '${CORPUS_FILE}'
+
+print(f'Reading {input_path}...')
+corpus = []
+with open(input_path, 'r') as f:
+    for line in tqdm(f, desc='Loading wiki-18.jsonl'):
+        line = line.strip()
+        if not line:
+            continue
+        doc = json.loads(line)
+        text = doc.get('text', doc.get('contents', doc.get('content', '')))
+        title = doc.get('title', '')
+        if title and text:
+            corpus.append(f'{title} {text}')
+        elif text:
+            corpus.append(text)
+
+print(f'Writing {len(corpus)} documents to {output_path}...')
+with open(output_path, 'w') as f:
+    json.dump(corpus, f)
+print(f'Done! corpus.json = {len(corpus)} docs')
+"
+    fi
+
+    # Prepare HotpotQA parquet data
+    print_step "Preparing HotpotQA parquet data..."
+    python scripts/prepare_search_data.py --output_dir data/search
+
+    print_step "Search environment setup complete"
+    echo "To start the retrieval server:"
+    echo "  CUDA_VISIBLE_DEVICES='' python scripts/retrieval/server.py --port 8001"
+}
+
+main() {
+    ensure_conda
+    validate_repo_root
+    cd "${PROJECT_ROOT}"
+
+    ensure_env
+
+    print_step "Installing base packaging dependency"
+    pip install setuptools
+
+    print_step "Initializing git submodules"
+    git submodule update --init --recursive
+
+    print_step "Installing RAGEN in editable mode"
+    pip install -e . --no-deps
+
+    print_step "Installing verl dependencies for v0.6.1"
+    pushd verl >/dev/null
+    USE_MEGATRON=0 bash scripts/install_vllm_sglang_mcore.sh
+    pip install --no-deps -e .
+    popd >/dev/null
+
+    print_step "Installing release environment dependencies"
+    pip install \
+        IPython \
+        matplotlib \
+        gym \
+        gym_sokoban \
+        gymnasium \
+        "gymnasium[toy-text]" \
+        debugpy \
+        together \
+        anthropic \
+        faiss-cpu==1.11.0 \
+        numpy==1.26.4
+
+    # Reinstall setuptools<70 (vllm may upgrade it, breaking pkg_resources for gym_sokoban)
+    pip install "setuptools<70.0.0"
+
+    print_step "Downloading project data"
+    python scripts/download_data.py
+
+    # Optional: search environment
+    if [ "$WITH_SEARCH" -eq 1 ]; then
+        setup_search
+    fi
+
+    print_step "Setup complete"
+    echo "Activate with: conda activate ${ENV_NAME}"
+}
+
+main "$@"

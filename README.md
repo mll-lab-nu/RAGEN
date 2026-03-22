@@ -1,397 +1,221 @@
-<h1 align="center"> RAGEN: Training Agents by Reinforcing Reasoning </h1>
-
+<h1 align="center">RAGEN: Training Agents by Reinforcing Reasoning</h1>
+<h3 align="center"><em>Diagnose agent failure modes. Make your RL training better.</em></h3>
 
 <p align="center"><img src="public/ragen_logo.jpeg" width="300px" alt="RAGEN icon" /></p>
 
-
-
-<p align="center" style="font-size: 18px;">
-  <strong>RAGEN</strong> (<b>R</b>easoning <b>AGEN</b>t, pronounced like "region") leverages reinforcement learning (RL) to train <br>
-  <strong>LLM reasoning agents</strong> in interactive, stochastic environments.<br>
-  <em>We strongly believe in the future of RL + LLM + Agents. The release is a minimally viable leap forward.</em>
+<p align="center">
+  <strong>RAGEN</strong> (<b>R</b>easoning <b>AGEN</b>T) is a flexible RL framework for training reasoning agents.
+</p>
+<p align="center">
+  We develop <strong>diagnostics to understand <i>how</i> agent RL training works </strong>, and how to fix hidden issues.
 </p>
 
-
 <p align="center">
+  <a href="https://ragen-ai.github.io/v2/pdf/RAGEN-v2.pdf"><img src="https://img.shields.io/badge/📄_V2_Paper-DC143C?style=for-the-badge&logoColor=white" alt="V2 Paper"></a>
+  <a href="https://arxiv.org/abs/2504.20073"><img src="https://img.shields.io/badge/📄_v1_Paper-FF8C00?style=for-the-badge&logoColor=white" alt="v1 Paper"></a>
   <a href="https://ragen-ai.github.io/"><img src="https://img.shields.io/badge/📝_HomePage-FF5722?style=for-the-badge&logoColor=white" alt="Blog"></a>
-  <a href="https://arxiv.org/abs/2504.20073"><img src="https://img.shields.io/badge/📄_Paper-EA4335?style=for-the-badge&logoColor=white" alt="Paper"></a>
   <a href="https://ragen-doc.readthedocs.io/"><img src="https://img.shields.io/badge/📚_Documentation-4285F4?style=for-the-badge&logoColor=white" alt="Documentation"></a>
   <a href="https://x.com/wzihanw/status/1915052871474712858"><img src="https://img.shields.io/badge/🔍_Post-34A853?style=for-the-badge&logoColor=white" alt="Post"></a>
   <a href="https://api.wandb.ai/links/zihanwang-ai-northwestern-university/a8er8l7b"><img src="https://img.shields.io/badge/🧪_Experiment_Log-AB47BC?style=for-the-badge&logoColor=white" alt="Experiment Log"></a>
-
 </p>
 
-**2025.5.8 Update:**
-We now release the official [Documentation](https://ragen-doc.readthedocs.io/) for RAGEN. The documentation will be continuously updated and improved to provide a comprehensive and up-to-date guidance.
+> **Looking for the V1 README?** Please take a look [here](docs/readme_v1.md).
 
-**2025.5.2 Update:**
-We now release a [tracking document](https://docs.google.com/document/d/1bg7obeiKTExuHHBl5uOiSpec5uLDZ2Tgvxy6li5pHX4/edit?usp=sharing) to log minor updates in the RAGEN codebase. 
+## News
 
-
-**2025.4.20 Update:**
-
-Our RAGEN [paper](https://arxiv.org/abs/2504.20073) is out!
-
-We've further streamlined the RAGEN codebase (v0423) to improve development.
-1. Architecture: Restructured veRL as a submodule for better co-development
-2. Modularity: Divided RAGEN into three components—Environment Manager, Context Manager, and Agent Proxy, making it significantly simpler to add new environments (details below), track environmental dynamics, and run multiple experiments
+- **2026.3.12.** We are excited to release <font color="#DC143C">RAGEN V2</font>! We introduce a systematic study of reasoning collapse in agent RL and lightweight interventions for stable training. See the [<font color="#DC143C">v2 paper</font>](https://ragen-ai.github.io/v2).
+- **2025.4.20.** RAGEN V1 [paper](https://arxiv.org/abs/2504.20073) published on arXiv.
+- **2025.1.27.** Initial RAGEN release. [Post](https://x.com/wzihanw/status/1884092805598826609).
 
 
-**2025.4.16 Update:**
+## About
 
-We recently noticed that a [third-party website](https://ragen-ai.com) has been created using our project's name and content. While we appreciate the interest in the project, we'd like to clarify that this GitHub repository is the official and primary source for all code, updates, and documentation.
-If we launch an official website in the future, it will be explicitly linked here.
+RAGEN is built around **StarPO** (**S**tate-**T**hinking-**A**ctions-**R**eward **P**olicy **O**ptimization), a unified RL framework for training multi-turn, trajectory-level agents with flexible control over reasoning processes, reward assignment mechanisms, and prompt-rollout structures.
 
-Thank you for your support and understanding!
+**RAGEN is flexible with:**
 
+- **StarPO framework.** Unified optimization for multi-turn agents, supporting both trajectory-level and turn-wise training.
+- **10 built-in environments.** Sokoban, FrozenLake, WebShop, DeepCoder, SearchQA, Lean, Bandit, Countdown, MetaMathQA, Sudoku.
+- **Gym-compatible interface.** Easy to add custom environments.
 
-**2025.3.13 Update:**
+**<font color="#DC143C">RAGEN V2</font> additionally introduces:**
 
+- **SNR-Adaptive Filtering (<font color="#DC143C">V2</font>).** Lightweight rollout filtering based on reward variance to mitigate noisy gradient updates.
+- **Reasoning collapse diagnostics (<font color="#DC143C">V2</font>).** Mutual information proxy metrics to detect and monitor template collapse during training.
 
-We are recently refactoring RAGEN code to help you better develop your own idea on the codebase. Please checkout our [developing branch](https://github.com/ZihanWang314/RAGEN/tree/main-new). The first version decomposes RAGEN and veRL for better co-development, taking the latter as a submodule rather than a static directory.
-
-**2025.3.8 Update:**
-
-1. In previous veRL implementation, there is a [KL term issue](https://github.com/volcengine/verl/pull/179/files), which has been fixed in recent versions.
-2. We find evidence from multiple sources that PPO could be more stable than GRPO training in [Open-Reasoner-Zero](https://x.com/rosstaylor90/status/1892664646890312125), [TinyZero](https://github.com/Jiayi-Pan/TinyZero), and [Zhihu](https://www.zhihu.com/search?type=content&q=%E6%97%A0%E5%81%8FGRPO). We have changed the default advantage estimator to GAE (using PPO) and aim to find more stable while efficient RL optimization methods in later versions.
-
-**2025.1.27:**
-
-We are thrilled to release RAGEN! Check out our post [here](https://x.com/wzihanw/status/1884092805598826609).
-
-
-## Overview
-
-<!--
-Reinforcement Learning (RL) with rule-based rewards has shown promise in enhancing reasoning capabilities of large language models (LLMs). However, existing approaches have primarily focused on static, single-turn tasks like math reasoning and coding. Extending these methods to agent scenarios introduces two fundamental challenges:
-
-1. **Multi-turn Interactions**: Agents must perform sequential decision-making and react to environment feedback
-2. **Stochastic Environments**: Uncertainty where identical actions can lead to different outcomes
-
-RAGEN addresses these challenges through:
-- A Markov Decision Process (MDP) formulation for agent tasks
-- State-Thinking-Actions-Reward Policy Optimization (StarPO) algorithm that optimizes entire trajectory distributions
-- Progressive reward normalization strategies to handle diverse, complex environments
--->
-
-Reinforcement Learning (RL) with rule-based rewards has shown promise in enhancing reasoning capabilities of large language models (LLMs). However, existing approaches have primarily focused on static, single-turn tasks like math reasoning and coding. Extending these methods to agent scenarios introduces two fundamental challenges:
-
-1. **Multi-turn Interactions**: Agents must perform sequential decision-making and react to environment feedback
-2. **Stochastic Environments**: Uncertainty where identical actions can lead to different outcomes
-
-To address these challenges, we propose a general RL framework: **StarPO** (**S**tate-**T**hinking-**A**ctions-**R**eward **P**olicy **O**ptimization), a comprehensive RL framework that provides a unified approach for training multi-turn, trajectory-level agents with flexible control over reasoning processes, reward assignment mechanisms, and prompt-rollout structures. 
-Building upon StarPO, we introduce **RAGEN**, a modular agent training and evaluation system that implements the complete training loop, including rollout generation, reward calculation, and trajectory optimization. RAGEN serves as a robust research infrastructure for systematically analyzing LLM agent training dynamics in multi-turn and stochastic environments.
 
 ## Algorithm
 
-RAGEN introduces a reinforcement learning framework to train reasoning-capable LLM agents that can operate in interactive, stochastic environments. 
+### StarPO: Reinforcing Reasoning via Trajectory-Level Optimization
 
 <p align="center"><img src="public/starpo_logo.png" width="800px" alt="StarPO Framework" /></p>
 <p align="center" style="font-size: 16px; max-width: 800px; margin: 0 auto;">
-The StarPO (State-Thinking-Action-Reward Policy Optimization) framework with two interleaved stages: <b>rollout stage</b> and <b>update stage</b>. LLM iteratively generates reasoning-guided actions to interact with the environment to obtain trajectory-level rewards for LLM update to jointly   optimize reasoning and action strategies.
+The StarPO (State-Thinking-Action-Reward Policy Optimization) framework with two interleaved stages: <b>rollout stage</b> and <b>update stage</b>. The LLM generates reasoning-guided actions to interact with the environment, collecting trajectory-level rewards to jointly optimize reasoning and action strategies.
 </p>
 
-The framework consists of two key components:
+**MDP Formulation.** Agent-environment interactions are formulated as Markov Decision Processes (MDPs) where states and actions are token sequences, allowing LLMs to reason over environment dynamics. The objective is to maximize expected cumulative rewards across multiple interaction turns.
 
-### > MDP Formulation 
-We formulate agent-environment interactions as Markov Decision Processes (MDPs) where states and actions are token sequences, allowing LLMs to reason over environment dynamics. At time t, state $s_t$ transitions to the next state through action $a_t$ following a transition function. The policy generates actions given the trajectory history. The objective is to maximize expected cumulative rewards across multiple interaction turns.
+**Rollout Stage.** Given an initial state, the LLM generates multiple trajectories. At each step, the model produces a reasoning-guided action: `<think>...</think><ans> action </ans>`. The environment returns feedback (reward and next state).
 
-### > StarPO: Reinforcing Reasoning via Trajectory-Level Optimization
-StarPO is a general RL framework for optimizing entire multi-turn interaction trajectories for LLM agents.
-The algorithm alternates between two phases:
+**Update Stage.** StarPO optimizes entire trajectories using importance sampling. It supports:
+- **PPO.** Token-level advantage estimation via a value function over trajectories.
+- **GRPO.** Normalized reward assigned to the full trajectory.
 
-#### Rollout Stage: Reasoning-Interaction Trajectories
-Given an initial state, the LLM generates multiple trajectories. At each step, the model receives the trajectory history and generates a reasoning-guided action: `<think>...</think><ans> action </ans>`. The environment receives the action and returns feedback (reward and next state).
+### <font color="#DC143C">V2</font>: Diagnosing Template Collapse
 
-#### Update Stage: Multi-turn Trajectory Optimization 
-After generating trajectories, we train LLMs to optimize expected rewards. Instead of step-by-step optimization, StarPO optimizes entire trajectories using importance sampling. This approach enables long-horizon reasoning while maintaining computational efficiency. 
-StarPO supports multiple optimization strategies: 
-- PPO: We estimate token-level advantages using a value function over trajectories
-- GRPO: We assign normalized reward to the full trajectory
+Entropy alone cannot detect *template collapse*, where reasoning appears diverse within a single input but becomes input-agnostic across inputs. <font color="#DC143C">RAGEN V2</font> decomposes reasoning quality into two axes:
+- **Within-input diversity:** Conditional Entropy H(Z|X)
+- **Cross-input distinguishability:** Mutual Information I(X;Z)
 
-Rollout and update stages interleave in StarPO, enabling both online and offline learning.
+SNR-Adaptive Filtering uses reward variance as a lightweight proxy to select high-signal prompts each iteration, directly addressing the root cause of template collapse.
 
-<!--
-### > Reward Normalization Strategies 
-We implement three progressive normalization strategies to stabilize training: 
-1. **ARPO**: Preserves raw rewards directly 
-2. **BRPO**: Normalizes rewards across each training batch using batch statistics
-3. **GRPO**: Normalizes within prompt groups to balance learning across varying task difficulties
--->
 
-## Environment Setup
-For detailed setup instructions, please check our [documentation](https://ragen-doc.readthedocs.io/). Here's a quick start guide:
+## Update Log
+
+**2026.3.12.** <font color="#DC143C">RAGEN V2</font> is released! Check out our [<font color="#DC143C">v2 paper</font>](https://ragen-ai.github.io/v2).
+
+<details>
+<summary>Older updates</summary>
+
+**2025.5.8.** Official [Documentation](https://ragen-doc.readthedocs.io/) released.
+
+**2025.5.2.** A [tracking document](https://docs.google.com/document/d/1bg7obeiKTExuHHBl5uOiSpec5uLDZ2Tgvxy6li5pHX4/edit?usp=sharing) for logging minor codebase updates is released.
+
+**2025.4.20.** RAGEN V1 [paper](https://arxiv.org/abs/2504.20073) published. Codebase restructured: veRL integrated as a submodule; architecture decomposed into three modules — Environment State Manager, Context Manager, and Agent Proxy.
+
+**2025.3.13.** RAGEN codebase refactoring underway. See the [developing branch](https://github.com/ZihanWang314/RAGEN/tree/main-new).
+
+**2025.3.8.** KL term issue in veRL [fixed](https://github.com/volcengine/verl/pull/179/files). Default advantage estimator changed to GAE (PPO) for more stable training.
+
+**2025.1.27.** Initial RAGEN release. [Post](https://x.com/wzihanw/status/1884092805598826609).
+
+</details>
+
+
+## Getting Started
 
 ```bash
-# Setup environment for RAGEN
+git clone https://github.com/mll-lab-nu/RAGEN.git
+cd RAGEN
+conda create -n ragen python=3.12 -y && conda activate ragen
 bash scripts/setup_ragen.sh
 ```
 
-If this fails, you can follow the manual setup instructions in `scripts/setup_ragen.md`.
+Use `bash scripts/setup_ragen.sh --with-search` to include the search environment. For WebShop, see [docs/experiment_webshop_release.md](docs/experiment_webshop_release.md).
 
-### Optional Dependencies
+### The Four Reasoning Regimes
 
-RAGEN supports optional environment-specific dependencies. You can install only the components you need:
+<font color="#DC143C">RAGEN V2</font> diagnoses agent behavior along two axes — **within-input diversity** (Conditional Entropy) and **cross-input distinguishability** (Mutual Information) — yielding four distinct reasoning regimes:
 
-```bash
-pip install -e . # Base installation (core functionality only)
-pip install -e ".[webshop]" # Include WebShop environment dependencies
-pip install -e ".[lean]" # Include Lean environment dependencies
-pip install -e ".[all]" # Install all optional dependencies
-pip install -e ".[webshop,lean]" # Or combine multiple extras
-```
-
-## Training Models
-Here's how to train models with RAGEN:
-
-### Export variables and train
-We provide default configuration in `config/base.yaml`. This file includes symbolic links to:
-- `config/ppo_trainer.yaml` 
-- `config/envs.yaml`
-
-The base configuration automatically inherits all contents from these two config files, creating a unified configuration system.
-
-To train:
-
-```bash
-python train.py --config-name base
-```
-
-
-### Parameter efficient training with LoRA
-
-### Saving compute
-By default our code is runnable on A100 80GB machines. If you are using machine with lower memory (e.g. RTX 4090), please consider adapting below parameters, like follows (performance might change due to smaller batch size and shorter context length):
-```bash
-python train.py \
-  micro_batch_size_per_gpu=1 \ 
-  ppo_mini_batch_size=8 \ 
-  actor_rollout_ref.rollout.max_model_len=2048 \ 
-  actor_rollout_ref.rollout.response_length=128 
-```
-
-#### Parameter efficient training with LoRA
-We provide a default configuration with LoRA enabled in `config/base-lora.yaml`. To customize the LoRA settings, see the the `lora` section at the top of the configuration file. The current settings are:
-
-```yaml
-lora rank: 64
-lora alpha: 64
-actor learning rate: 1e-5
-critic learning rate: 1e-4
-```
-
-<!--
-## Supervised Finetuning (Optional)
-For supervised finetuning with LoRA:
-
-1. Create supervised finetuning data:
-```bash
-bash sft/generate_data.sh <env_type>
-```
-
-2. Finetune the model:
-```bash
-bash sft/finetune_lora.sh <env_type> <num_gpus> <save_path>
-```
-
-3. Merge LoRA weights with the base model:
-```bash
-python sft/utils/merge_lora.py \
-    --base_model_name <base_model_name> \
-    --lora_model_path <lora_model_path> \
-    --output_path <output_path>
-```
--->
-
-## Visualization
-Please check the `val/generations` metric in your wandb dashboard to see the trajectories generated by the model throughout training. Check this [relevant issue](https://github.com/RAGEN-AI/RAGEN/issues/84) for more information. 
-
-
-## Performance
-
-We evaluate RAGEN across multiple environments. Below are results Qwen-2.5-0.5B-Instruct on Sokoban, Frozenlake, Bandit, and Spatial. 
-- No KL loss or KL penalty was applied during training
-- We selectively retained only the top 25% of trajectories that successfully completed their respective tasks
-
-<p align="center" style="display: flex; justify-content: center; align-items: center; flex-direction: column; gap: 20px; max-width: 500px; margin: 0 auto;">
-    <img src="public/exp1.png" width="250px" alt="Bandit" />
-    <img src="public/exp2.png" width="250px"  alt="Simple Sokoban" />
-    <img src="public/exp3.png" width="250px"  alt="Frozen lake" />
+<p align="center"><img src="public/teaser.png" width="800px" alt="Four reasoning regimes: diverse reasoning, template collapse, compressed reasoning, low-entropy collapse" /></p>
+<p align="center" style="font-size: 15px; max-width: 800px; margin: 0 auto;">
+<b>Left:</b> Input-driven reasoning adapts to the current state; templated reasoning produces nearly identical responses across different inputs. <b>Right:</b> Four reasoning regimes along two axes — conditional entropy H(Z|X) (within-input diversity) and mutual information I(X;Z) (input dependence). Template collapse (high entropy, low MI) is invisible to existing entropy-based metrics.
 </p>
 
-We demonstrate RAGEN's robust generalization ability by training on simple Sokoban environments (6×6 with 1 box) and successfully evaluating performance on:
-- Larger Sokoban environments (8×8 with 2 boxes)
-- Simple Sokoban with alternative grid vocabulary representations
-- FrozenLake environments
-
-<p align="center" style="display: flex; justify-content: center; align-items: center; flex-direction: column; gap: 20px; max-width: 500px; margin: 0 auto;">
-    <img src="public/exp4.png" width="250px" alt="Larger Sokoban" />
-    <img src="public/exp5.png" width="250px"  alt="Sokoban with Different Grid Vocabulary" />
-    <img src="public/exp6.png" width="250px"  alt="Frozen lake" />
-</p>
-
-Key observations:
-- By using no KL and filtering out failed trajectories, we can achieve better and stable performance
-- Generalization results highlight RAGEN's capacity to transfer learned policies across varying environment complexities, representations, and domains.
-
-## Evaluation
-RAGEN provides a easy way to evaluate a model:
+**Train (no filter, default):**
 ```bash
-python -m ragen.llm_agent.agent_proxy --config-name <eval_config>
-```
-The proxy now loads `config/eval.yaml` by default, which only keeps the rollout-specific knobs required for evaluation. You can still point to any other file via `--config-name`. Each evaluation config supports an `output` block so you can control where rollouts are stored and which fields are persisted:
-
-```yaml
-output:
-  dir: results/eval
-  filename: val_rollouts.pkl
-  append_timestamp: true   # include run timestamp in the file name
-  keep_batch_keys: ["rm_scores", "responses"]   # set to null to keep everything
-  keep_non_tensor_keys: null
-  keep_meta_info: true
+python train.py --config-name _2_sokoban
 ```
 
-With this configuration the proxy filters the `DataProto` before saving (handy if you want to drop large tensors such as log-probs) and places the artifact directly under `results/eval`.  
-You only need to set model and environment to evaluate in `config/<eval_config>.yaml`.  
-To limit how many previous turns the model sees during evaluation, you can set `agent_proxy.max_context_window` in your config file.
-
-
-<!--
-## Example Trajectories
-
-Visualization of agent reasoning on the Sokoban task:
-
-<p align="center" style="display: flex; justify-content: center; gap: 10px;">
-    <img src="./public/step_1.png" width="200px" alt="Step 1" />
-    <img src="./public/step_2.png" width="200px" alt="Step 2" />
-</p>
-
-The visualizations show how the agent reasons through sequential steps to solve the puzzle.
-
-## Case Studies
-We provide several case studies showing the model's behavior:
-- [Reward hacking](https://github.com/ZihanWang314/agent-r1/blob/main/cases/reward_hacking.txt)
-- [Challenging moments](https://github.com/ZihanWang314/agent-r1/blob/main/cases/suck_moment.txt)
-
-More case studies will be added to showcase both successful reasoning patterns and failure modes.
--->
-
-## Modular System Design of RAGEN
-
-We implement RAGEN as a modular system: there are three main modules: **Environment State Manager** (`ragen/llm_agent/es_manager.py`), **Context Manager** (`ragen/llm_agent/ctx_manager.py`), and **Agent Proxy** (`ragen/llm_agent/agent_proxy.py`).
-
-- Environment State Manager (**es_manager**):
-  - Supports multiple environments (different environments, same environment different seeds, same environment same seed)
-  - Training seeds are controlled via `seed.train` in the config. The manager increments this seed each reset so runs are deterministic.
-  - Records states of each environment during rollout
-  - Processes actions from **ctx_manager**, executes step, and returns action results (observations) to **ctx_manager** in a batch-wise manner
-- Context Manager (**ctx_manager**):
-  - Parses raw agent tokens into structured actions for the **es_manager**
-  - Formats observation from **es_manager**, parses and formulates them for following rollout of agent.
-  - Supports a `max_context_window` hyperparameter, which limits how many previous turns of interaction history are retained in the model’s input. 
-  - Gathers final rollout trajectories and compiles them into tokens, attention masks, reward scores, and loss masks for llm updating.
-- Agent Proxy (**agent_proxy**): Serves as the interface for executing single or multi-round rollouts
-
-## Adding Custom Environments
-
-To add a new environment to our framework:
-
-1. Implement an OpenAI Gym-compatible environment in `ragen/env/new_env/env.py` with these required methods:
-   - `step(action)`: Process actions and return next state
-   - `reset(seed)`: Initialize environment with new seed
-   - `render()`: Return current state observation
-   - `close()`: Clean up resources
-
-2. Define environment configuration in `ragen/env/new_env/config.py`
-
-3. Register your environment in `config/envs.yaml`:
-   ```yaml
-   custom_envs:
-     - NewEnvironment # Tag
-       - env_type: new_env  # Must match environment class name
-       - max_actions_per_traj: 50  # Example value
-       - env_instruction: "Your environment instructions here"
-       - parallel_friendly: false # Set to true if your environment supports parallel execution.
-       - max_workers: 128 # If parallel_friendly=True, max_workers threads will be used.
-       - env_config: {}  # Configuration options from config.py
-   ```
-   (Hint: Due to the extra time cost associated with using a thread pool, there is a trade-off between the pool's overhead and the speed of the environment itself. It is recommended to enable the parallelism only for complex environments. Meanwhile, running the RNG-dependent environments inside shared thread pools means multiple workers touch Python’s global random state concurrently, so even with the same seed, interleaving differs per run when setting `parallel_friendly=True`.)
-
-4. Add the environment tag to the `es_manager` section in `config/base.yaml`
-
-## Using RAGEN with dstack
-
-[dstackai/dstack](https://github.com/dstackai/dstack) is an open-source container orchestrator that simplifies distributed training across cloud providers and on-premises environments
-without the need to use K8S or Slurm.
-
-### 1. Create fleet
-
-Before submitting distributed training jobs, create a `dstack` [fleet](https://dstack.ai/docs/concepts/fleets).
-
-### 2. Run a Ray cluster task
-
-Once the fleet is created, define and apply a Ray cluster task:
-
-```shell
-$ dstack apply -f examples/distributed-training/ray-ragen/.dstack.yml
+**Train with SNR-Adaptive Filtering (<font color="#DC143C">V2</font>, Top-p):**
+```bash
+python train.py --config-name _2_sokoban \
+  actor_rollout_ref.rollout_filter_strategy=top_p \
+  actor_rollout_ref.rollout.rollout_filter_value=0.9
 ```
 
-You can find the task configuration example at [`examples/distributed-training/ray-ragen/.dstack.yml`](https://github.com/dstackai/dstack/blob/master/examples/distributed-training/ray-ragen/.dstack.yml).
-
-The `dstack apply` command will provision the Ray cluster with all dependencies and forward the Ray dashboard port to `localhost:8265`.
-
-
-### 3. Submit a training job
-
-Now you can submit a training job locally to the Ray cluster:
-
-```shell
-$ RAY_ADDRESS=http://localhost:8265
-$ ray job submit \
-    ...
+**Evaluate:**
+```bash
+python -m ragen.llm_agent.agent_proxy --config-name _2_sokoban
 ```
 
-See the full [RAGEN+Ray example](https://dstack.ai/examples/distributed-training/ray-ragen/).
+SNR-Adaptive Filtering consistently improves training across algorithms, model scales, and modalities (green = gain from filtering):
 
-For more details on how `dstack` can be used for distributed training, check out the [Clusters](https://dstack.ai/docs/guides/clusters/) guide.
+<p align="center"><img src="public/main_results.png" width="800px" alt="Main results: filtering vs no filtering" /></p>
 
-## Feedback
-We welcome all forms of feedback! Please raise an issue for bugs, questions, or suggestions. This helps our team address common problems efficiently and builds a more productive community.
+See the [Rollout Filtering Guide](docs/guide_rollout_filtering.md) for more filtering strategies (Top-k, linear mode, etc.).
 
-## Awesome work powered or inspired by RAGEN
- - [ROLL](https://github.com/alibaba/ROLL): An Efficient and User-Friendly Scaling Library for Reinforcement Learning with Large Language Models
- - [VAGEN](https://github.com/RAGEN-AI/VAGEN): Training Visual Agents with multi-turn reinforcement learning
- - [Search-R1](https://github.com/PeterGriffinJin/Search-R1): Train your LLMs to reason and call a search engine with reinforcement learning
- - [ZeroSearch](https://github.com/Alibaba-nlp/ZeroSearch): Incentivize the Search Capability of LLMs without Searching
- - [Agent-R1](https://github.com/0russwest0/Agent-R1): Training Powerful LLM Agents with End-to-End Reinforcement Learning
- - [OpenManus-RL](https://github.com/OpenManus/OpenManus-RL): A live stream development of RL tunning for LLM agents
- - [MetaSpatial](https://github.com/PzySeere/MetaSpatial): Reinforcing 3D Spatial Reasoning in VLMs for the Metaverse
- - [s3](https://github.com/pat-jj/s3): Efficient Yet Effective Search Agent Training via Reinforcement Learning
+
+## Future Plans
+
+We are actively developing the next generation of RAGEN infrastructure and diagnostics, targeting a release in **late March 2026**.
+
+**Infrastructure**
+- [ ] **Async rollout engine** 
+- [ ] **HTTP-based environment interface** 
+- [ ] **Layered Env Wrapper** 
+- [ ] **Optional environment dependencies** 
+
+**Diagnostics & Training Quality**
+- [ ] **Expanded benchmark suite** to stress-test diagnostics across diverse, real-world agent tasks
+- [ ] **Extended MI diagnostic dashboard**, including richer WandB visualizations for entropy, MI proxy, and gradient decomposition over training
+- [ ] **RL training metrics guide**, including a practitioner's blog on how to read training signals (reward distribution, entropy, MI, gradient norms) and act on them before committing to a full run
+
+**Framework**
+- [ ] Update full documentation for <font color="#DC143C">RAGEN V2</font>
+- [ ] Multi-modal agent support (building upon [VAGEN](https://github.com/RAGEN-AI/VAGEN))
+- [ ] Public leaderboard for benchmark results
+
+
+## Documentation
+
+- [Full Documentation](https://ragen-doc.readthedocs.io/) *(We will release an updated version soon.)*
+- [Rollout Filtering Guide](docs/guide_rollout_filtering.md)
+- [MI Metrics Reference](docs/reference_mutual_information_metrics.md)
+- Adding Custom Environments — Gym-compatible interface, see `config/envs.yaml` and [documentation](https://ragen-doc.readthedocs.io/)
+- Experiment reproduction: [Main Table](docs/experiment_main_table.md) | [Intervention Sweep](docs/experiment_intervention_sweep.md) | [FrozenLake](docs/experiment_frozen_lake_slipper_sweep.md) | [Sokoban Gradient](docs/experiment_sokoban_gradient_analysis.md) | [Search](docs/experiment_search.md) | [DeepCoder](docs/experiment_deepcoder.md) | [WebShop](docs/experiment_webshop_release.md)
+
+
+## Awesome Work Powered or Inspired by RAGEN
+
+- [ROLL](https://github.com/alibaba/ROLL): Efficient Scaling Library for RL with LLMs ![GitHub Repo stars](https://img.shields.io/github/stars/alibaba/ROLL?style=social)
+- [VAGEN](https://github.com/RAGEN-AI/VAGEN): Training Visual Agents with multi-turn RL ![GitHub Repo stars](https://img.shields.io/github/stars/RAGEN-AI/VAGEN?style=social)
+- [Search-R1](https://github.com/PeterGriffinJin/Search-R1): Train LLMs to reason and call a search engine with RL ![GitHub Repo stars](https://img.shields.io/github/stars/PeterGriffinJin/Search-R1?style=social)
+- [ZeroSearch](https://github.com/Alibaba-nlp/ZeroSearch): Incentivize LLM search capability without searching ![GitHub Repo stars](https://img.shields.io/github/stars/Alibaba-nlp/ZeroSearch?style=social)
+- [Agent-R1](https://github.com/AgentR1/Agent-R1): Training Powerful LLM Agents with End-to-End RL
+- [OpenManus-RL](https://github.com/OpenManus/OpenManus-RL): RL tuning for LLM agents ![GitHub Repo stars](https://img.shields.io/github/stars/OpenManus/OpenManus-RL?style=social)
+- [MetaSpatial](https://github.com/PzySeere/MetaSpatial): Reinforcing 3D Spatial Reasoning in VLMs ![GitHub Repo stars](https://img.shields.io/github/stars/PzySeere/MetaSpatial?style=social)
+- [s3](https://github.com/pat-jj/s3): Efficient Yet Effective Search Agent Training via RL
 
 
 ## Contributors
 
 [**Zihan Wang**\*](https://zihanwang314.github.io/), [**Kangrui Wang**\*](https://jameskrw.github.io/), [**Qineng Wang**\*](https://qinengwang-aiden.github.io/), [**Pingyue Zhang**\*](https://williamzhangsjtu.github.io/), [**Linjie Li**\*](https://scholar.google.com/citations?user=WR875gYAAAAJ&hl=en), [**Zhengyuan Yang**](https://zyang-ur.github.io/), [**Xing Jin**](https://openreview.net/profile?id=~Xing_Jin3), [**Kefan Yu**](https://www.linkedin.com/in/kefan-yu-22723a25b/en/), [**Minh Nhat Nguyen**](https://www.linkedin.com/in/menhguin/?originalSubdomain=sg), [**Licheng Liu**](https://x.com/liulicheng10), [**Eli Gottlieb**](https://www.linkedin.com/in/eli-gottlieb1/), [**Yiping Lu**](https://2prime.github.io), [**Kyunghyun Cho**](https://kyunghyuncho.me/), [**Jiajun Wu**](https://jiajunwu.com/), [**Li Fei-Fei**](https://profiles.stanford.edu/fei-fei-li), [**Lijuan Wang**](https://www.microsoft.com/en-us/research/people/lijuanw/), [**Yejin Choi**](https://homes.cs.washington.edu/~yejin/), [**Manling Li**](https://limanling.github.io/)
 
-*:Equal Contribution.
+\*Equal Contribution.
+
 
 ## Acknowledgements
-We thank the [DeepSeek](https://github.com/deepseek-ai/DeepSeek-R1) team for providing the DeepSeek-R1 model and early conceptual inspirations. We are grateful to the [veRL](https://github.com/volcengine/verl) team for their infrastructure support. We thank the [TinyZero](https://github.com/Jiayi-Pan/TinyZero) team for their discoveries that informed our initial exploration. We would like to appreciate insightful discussions with Han Liu, Xinyu Xing, Li Erran Li, John Schulman, Akari Asai, Eiso Kant, Lu Lu, Runxin Xu, Huajian Xin, Zijun Liu, Weiyi Liu, Weimin Wu, Yibo Wen, Jiarui Liu, Lorenzo Xiao, Ishan Mukherjee, Anabella Isaro, Haosen Sun, How-Yeh Wan, Lester Xue, Matthew Khoriaty, Haoxiang Sun, Jiajun Liu.
+
+We thank the [DeepSeek](https://github.com/deepseek-ai/DeepSeek-R1) team for early conceptual inspirations. We are grateful to the [veRL](https://github.com/volcengine/verl) team for infrastructure support. We thank the [TinyZero](https://github.com/Jiayi-Pan/TinyZero) team for discoveries that informed our initial exploration. We appreciate insightful discussions with Han Liu, Xinyu Xing, Li Erran Li, John Schulman, Akari Asai, Eiso Kant, Lu Lu, Runxin Xu, Huajian Xin, Zijun Liu, Weiyi Liu, Weimin Wu, Yibo Wen, Jiarui Liu, Lorenzo Xiao, Ishan Mukherjee, Anabella Isaro, Haosen Sun, How-Yeh Wan, Lester Xue, Matthew Khoriaty, Haoxiang Sun, Jiajun Liu.
+
+For <font color="#DC143C">RAGEN V2</font>, we additionally thank Yuxiang Lin and Kyunghyun Cho for their support.
+
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ragen-ai/ragen&type=Date)](https://www.star-history.com/#ragen-ai/ragen&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=mll-lab-nu/ragen&type=Date)](https://www.star-history.com/#mll-lab-nu/ragen&Date)
+
 
 ## Citation
-If you find RAGEN useful, we would appreciate it if you consider citing our work:
-```md
+
+```bibtex
+@misc{ragen-v2,
+      title={RAGEN-V2: Understanding Reasoning Collapse in LLM Agent Reinforcement Learning},
+      author={Zihan Wang and Chi Gui and Xing Jin and Qineng Wang and Licheng Liu and Kangrui Wang and Shiqi Chen and Linjie Li and Zhengyuan Yang and Pingyue Zhang and Yiping Lu and Jiajun Wu and Li Fei-Fei and Lijuan Wang and Yejin Choi and Manling Li},
+      year={2026},
+      url={https://ragen-ai.github.io/v2},
+}
+```
+
+```bibtex
 @misc{ragen,
-      title={RAGEN: Understanding Self-Evolution in LLM Agents via Multi-Turn Reinforcement Learning}, 
+      title={RAGEN: Understanding Self-Evolution in LLM Agents via Multi-Turn Reinforcement Learning},
       author={Zihan Wang and Kangrui Wang and Qineng Wang and Pingyue Zhang and Linjie Li and Zhengyuan Yang and Xing Jin and Kefan Yu and Minh Nhat Nguyen and Licheng Liu and Eli Gottlieb and Yiping Lu and Kyunghyun Cho and Jiajun Wu and Li Fei-Fei and Lijuan Wang and Yejin Choi and Manling Li},
       year={2025},
       eprint={2504.20073},
       archivePrefix={arXiv},
       primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2504.20073}, 
+      url={https://arxiv.org/abs/2504.20073},
 }
 ```

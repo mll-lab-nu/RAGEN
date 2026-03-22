@@ -1,0 +1,23 @@
+defaults:
+  - base
+
+trainer:
+  experiment_name: 2048
+
+agent_proxy:
+  max_turn: 800
+  max_actions_per_turn: 1
+  max_context_window: 5
+
+actor_rollout_ref:
+  rollout:
+    max_model_len: 8192
+    response_length: 256
+
+es_manager:
+  train:
+    env_configs:
+      tags: ["game_2048"]
+  val:
+    env_configs:
+      tags: ["game_2048"]

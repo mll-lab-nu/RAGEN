@@ -497,7 +497,7 @@ def reverse_playing(room_state, room_structure, search_depth=100):
     return best_room, best_box_mapping, best_action_sequence
 
 
-def depth_first_search(room_state, room_structure, box_mapping, box_swaps=0, last_pull=(-1, -1), ttl=300, action_sequence=[]):
+def depth_first_search(room_state, room_structure, box_mapping, box_swaps=0, last_pull=(-1, -1), ttl=300, action_sequence=None):
     """
     Searches through all possible states of the room.
     This is a recursive function, which stops if the ttl is reduced to 0 or
@@ -511,6 +511,8 @@ def depth_first_search(room_state, room_structure, box_mapping, box_swaps=0, las
     :param action_sequence:
     :return:
     """
+    if action_sequence is None:
+        action_sequence = []
     global explored_states, num_boxes, best_room_score, best_room, best_box_mapping, best_action_sequence
 
     ttl -= 1

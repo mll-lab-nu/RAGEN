@@ -30,12 +30,20 @@ def compute_grpo_outcome_advantage(
     epsilon: float = 1e-6,
     norm_adv_by_std_in_grpo: bool = True,
     episode_ids: Optional[np.ndarray] = None,
+    return_group_std: bool = False,
 ):
     """
     Compute advantage for GRPO with episode-level deduplication support.
 
     When episode_ids is provided (for single_turn/limited_multi_turn mode), each (index, episode_id) pair
     only contributes once to mean/std calculation, avoiding bias from different turn counts.
+
+    Args:
+        return_group_std: If True, also returns the per-sample group std tensor for soft reweighting.
+
+    Returns:
+        If return_group_std=False: (advantages, returns)
+        If return_group_std=True: (advantages, returns, group_std) where group_std is shape (batch_size,)
     """
     scores = token_level_rewards.sum(dim=-1)
 
@@ -72,6 +80,13 @@ def compute_grpo_outcome_advantage(
             else:
                 scores[i] = scores[i] - id2mean[index[i]]
         scores = scores.unsqueeze(-1) * response_mask
+
+        # Collect per-sample group std for soft reweighting
+        if return_group_std:
+            group_std = torch.zeros(bsz, device=scores.device)
+            for i in range(bsz):
+                group_std[i] = id2std[index[i]]
+            return scores, scores, group_std
 
     return scores, scores
 

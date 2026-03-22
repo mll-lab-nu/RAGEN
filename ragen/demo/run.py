@@ -30,6 +30,7 @@ def rollout_stream():
         'validate': True
     })
     env_outputs = agent_proxy.val_es_manager.reset()
+    agent_proxy.val_ctx_manager.reset_memory_managers()
     assert len(env_outputs) == 1
 
     for turn_idx in range(agent_proxy.config.agent_proxy.max_turn):

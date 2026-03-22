@@ -13,7 +13,7 @@ base_requires = [
     "codetiming",
     "datasets",
     "dill",
-    "flash-attn==2.7.4.post1",
+    # "flash-attn==2.7.4.post1",
     "hydra-core",
     "numpy",
     "pandas",
@@ -53,6 +53,13 @@ lean_requires = [
     "kimina-client",
 ]
 
+# Optional dependencies for search environment
+# Note: the retrieval server (scripts/retrieval/server.py) additionally needs:
+#   flask, faiss-cpu, sentence-transformers
+search_requires = [
+    "requests",
+]
+
 setup(
     name='ragen',
     version='0.1',
@@ -66,7 +73,8 @@ setup(
     extras_require={
         "webshop": webshop_requires,
         "lean": lean_requires,
-        "all": webshop_requires + lean_requires,
+        "search": search_requires,
+        "all": webshop_requires + lean_requires + search_requires,
     },
     package_data={'ragen': ['*/*.md']},
     classifiers=[

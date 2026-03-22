@@ -1,6 +1,10 @@
 defaults:
   - base
 
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
 trainer:
   experiment_name: frozenlake-main
 
@@ -12,3 +16,9 @@ es_manager:
   val:
     env_configs:
       tags: ["CoordFrozenLake"]
+
+custom_envs:
+  CoordFrozenLake:
+    env_config:
+      success_rate: 1 # Probability of moving in the intended direction
+      observation_format: "grid_coord"

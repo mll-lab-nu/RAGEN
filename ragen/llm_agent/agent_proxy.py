@@ -17,6 +17,25 @@ from omegaconf import OmegaConf, open_dict
 import wandb
 
 
+def _get_rollout_val_kwarg(ro_config, key: str, default=None):
+    return OmegaConf.select(
+        ro_config,
+        f"val_kwargs.{key}",
+        default=OmegaConf.select(ro_config, key, default=default),
+    )
+
+
+def _get_rollout_do_sample(config) -> bool:
+    return bool(
+        OmegaConf.select(
+            config,
+            "actor_rollout_ref.rollout.val_kwargs.do_sample",
+            default=OmegaConf.select(
+                config, "actor_rollout_ref.rollout.do_sample", default=False
+            ),
+        )
+    )
+
 
 class VllmWrapperWg:  # Thi is a developing class for eval and test
     def __init__(self, config, tokenizer):
@@ -24,6 +43,10 @@ class VllmWrapperWg:  # Thi is a developing class for eval and test
         self.tokenizer = tokenizer
         model_name = config.actor_rollout_ref.model.path
         ro_config = config.actor_rollout_ref.rollout
+        temperature = _get_rollout_val_kwarg(ro_config, "temperature", default=1.0)
+        top_p = _get_rollout_val_kwarg(ro_config, "top_p", default=1.0)
+        top_k = _get_rollout_val_kwarg(ro_config, "top_k", default=-1)
+        logprobs = _get_rollout_val_kwarg(ro_config, "logprobs", default=None)
         log_stats_interval = getattr(ro_config, "log_stats_interval", None)
         llm_kwargs = dict(
             enable_sleep_mode=True,
@@ -48,14 +71,15 @@ class VllmWrapperWg:  # Thi is a developing class for eval and test
             **llm_kwargs,
         )
         print("LLM initialized")
-        self.sampling_params = SamplingParams(
+        sampling_kwargs = dict(
             max_tokens=ro_config.response_length,
-            temperature=ro_config.val_kwargs.temperature,
-            top_p=ro_config.val_kwargs.top_p,
-            top_k=ro_config.val_kwargs.top_k,
-            logprobs=ro_config.val_kwargs.logprobs,
-            # min_p=0.1,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
         )
+        if logprobs is not None:
+            sampling_kwargs["logprobs"] = logprobs
+        self.sampling_params = SamplingParams(**sampling_kwargs)
 
     def generate_sequences(self, lm_inputs: DataProto):
         """
@@ -77,18 +101,25 @@ class VllmWrapperWg:  # Thi is a developing class for eval and test
 
         # get the entropy of the response
         entropys = []
-        all_logprobs = [output.outputs[0].logprobs for output in outputs]
-        for logprob_in_a_series in all_logprobs:
+        n_tokens = []
+        for output in outputs:
+            output_data = output.outputs[0]
+            token_logprobs = getattr(output_data, "logprobs", None)
+            token_ids = getattr(output_data, "token_ids", None) or []
+            if token_logprobs is None:
+                entropys.append(0.0)
+                n_tokens.append(len(token_ids))
+                continue
+
             entropy_of_the_series = []
-            for logprob_in_a_token in logprob_in_a_series:
+            for logprob_in_a_token in token_logprobs:
                 logprobs = np.array([i.logprob for i in logprob_in_a_token.values()])
                 entropy_of_the_token = -(logprobs * np.exp(logprobs)).sum()
                 entropy_of_the_series.append(entropy_of_the_token)
             entropy_of_the_series = np.array(entropy_of_the_series)
-            entropy_of_the_series = entropy_of_the_series.sum()
-            entropys.append(entropy_of_the_series)
+            entropys.append(entropy_of_the_series.sum())
+            n_tokens.append(len(token_logprobs))
         entropys = np.array(entropys)
-        n_tokens = [len(logprob_in_a_series) for logprob_in_a_series in all_logprobs]
         n_tokens = np.array(n_tokens)
 
         # get the in_group_std of the response
@@ -195,6 +226,7 @@ class LLMAgentProxy:
         es_manager = self.val_es_manager if val else self.train_es_manager
         ctx_manager = self.val_ctx_manager if val else self.train_ctx_manager
         env_outputs = es_manager.reset()
+        ctx_manager.reset_memory_managers()
 
         max_turn = self.config.agent_proxy.max_turn
         multi_turn = max_turn > 1
@@ -256,11 +288,17 @@ class LLMAgentProxy:
             last_inputs.meta_info["mode"] = "multiturn-end"
             self.generate_sequences(last_inputs)
         rollout_states = es_manager.get_rollout_states()
-        rollouts = ctx_manager.formulate_rollouts(rollout_states)
+        include_collapse_data = True
+        if dataproto.meta_info is not None:
+            include_collapse_data = dataproto.meta_info.get("compute_collapse", True)
+        rollouts = ctx_manager.formulate_rollouts(
+            rollout_states, include_collapse_data=include_collapse_data
+        )
 
         # calculate instance-level entropy
         if "entropys" in rollouts.non_tensor_batch:
-            rollouts.non_tensor_batch["entropys"] = entropys / n_tokens
+            safe_n_tokens = np.where(n_tokens > 0, n_tokens, 1)
+            rollouts.non_tensor_batch["entropys"] = entropys / safe_n_tokens
             rollouts.non_tensor_batch["n_generated_tokens"] = n_tokens
             rollouts.non_tensor_batch["n_turns"] = n_turns
 
@@ -320,11 +358,11 @@ def main(config):
             batch=None,
             non_tensor_batch=None,
             meta_info={
-                    "eos_token_id": 151645,
-                    "pad_token_id": 151643,
-                    "recompute_log_prob": False,
-                    "do_sample": config.actor_rollout_ref.rollout.do_sample,
-                    "validate": True
+                "eos_token_id": 151645,
+                "pad_token_id": 151643,
+                "recompute_log_prob": False,
+                "do_sample": _get_rollout_do_sample(config),
+                "validate": True,
             }
         ),
         val=True

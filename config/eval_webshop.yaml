@@ -1,6 +1,10 @@
 defaults:
   - base  # inherit the base training/eval config
 
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
 system:
   CUDA_VISIBLE_DEVICES: "0,1,2,3"        # change to your GPU layout
 

@@ -182,16 +182,24 @@ class EnvStateManager:
         """
         def _execute_actions(env, actions):
             acc_reward, turn_info, turn_done = 0, {}, False
+            raw_acc_reward = 0.0
             executed_actions = []
             for action in actions:
                 _, reward, done, info = env.step(action)
                 acc_reward += reward
+                try:
+                    raw_acc_reward += float(info.get('raw_reward', 0.0))
+                except Exception:
+                    pass
                 turn_info.update(info) # NOTE: currently use last info for multi-action
                 executed_actions.append(action)
                 if done:
                     turn_done = True
                     break
-            
+            try:
+                turn_info['raw_reward'] = float(raw_acc_reward)
+            except Exception:
+                pass
             return acc_reward, turn_info, turn_done, executed_actions
 
         def _log_env_state(status, history, cur_obs, max_actions_per_traj, executed_actions, all_actions, acc_reward, turn_done, turn_info, env_input):
@@ -320,6 +328,14 @@ class EnvStateManager:
                 'success': float(status.terminated and (not status.truncated)),
                 'num_actions': status.num_actions,
             }
+
+            try:
+                import numpy as _np
+                if hasattr(entry['env'], 'grid'):
+                    env_metric['max_tile'] = int(_np.max(entry['env'].grid))
+            except Exception:
+                pass  
+
             custom_metric = {}
             for turn in cache['history']:
                 for k, v in turn.get('info', {}).items():
@@ -334,13 +350,23 @@ class EnvStateManager:
                             "Skipping non-numeric metric '%s' with value %r for env %s.",
                             k, v, entry['tag']
                         )
+            try:
+                if 'raw_reward' in custom_metric:
+                    env_metric['episodic_return'] = float(np.sum(custom_metric['raw_reward']))
+            except Exception:
+                pass    
+
             for k, v in custom_metric.items():
                 # TODO: Move TURN_LVL_METRICS into the environment
                 if "webshop" not in cache['tag'].lower() or ("webshop" in cache['tag'].lower() and k in TURN_LVL_METRICS):
                     env_metric[k] = np.sum(v) / (len(cache['history']) - 1) # NOTE: exclude the last observation
                 else:
                     env_metric['traj_sum/' + k] = np.sum(v)
-
+            try:
+                if 'score' in custom_metric and len(custom_metric['score']) > 0:
+                    env_metric['final_score'] = float(custom_metric['score'][-1])
+            except Exception:
+                pass
 
             cache['history'][-1]['metrics'] = custom_metric
             env_metric = {f"{entry['tag']}/{k}": v for k, v in env_metric.items()}

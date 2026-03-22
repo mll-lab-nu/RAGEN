@@ -22,7 +22,6 @@ class MetaMathQAEnv(BaseLanguageBasedEnv):
         
     def _extract_answer(self, response):
         match = re.search(r"The answer is: (.*?)$", response, re.DOTALL)
-        print(response)
         if match:
             return match.group(1).strip()
         return None
@@ -67,46 +66,3 @@ class MetaMathQAEnv(BaseLanguageBasedEnv):
     def render(self):
         return self.render_cache
 
-
-if __name__ == "__main__":
-    # Create the environment configuration
-    config = MetaMathQAEnvConfig(
-        dataset_path="meta-math/MetaMathQA",
-        cache_dir="./data",
-        split="train"
-    )
-    
-    # Initialize the environment
-    env = MetaMathQAEnv(config)
-    
-    # Reset the environment to get the first question
-    print("Question:")
-    question = env.reset(seed=42)
-    print(question)
-    print("\nCorrect answer (for testing purposes):")
-    print(env.correct_answer)
-    
-    # Interactive loop for testing
-    while True:
-        user_answer = input("\nEnter your answer (or 'q' to quit): ")
-        if user_answer.lower() == 'q':
-            break
-        
-        # Take a step in the environment with the user's answer
-        #breakpoint()
-        obs, reward, done, info = env.step(user_answer)
-        
-        
-        # Print the results
-        print("\nFeedback:", obs)
-        print("Reward:", reward)
-        print("Done:", done)
-        print("Info:", info)
-        
-        # If the episode is done, reset the environment for a new question
-        if done:
-            print("\n--- New Question ---")
-            question = env.reset()
-            print(question)
-            print("\nCorrect answer (for testing purposes):")
-            print(env.correct_answer)

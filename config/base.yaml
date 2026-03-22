@@ -1,5 +1,5 @@
 defaults:
-  - ppo_trainer # this is a symbolic link to the verl/verl/trainer/config/ppo_trainer.yaml file
+  - ppo_trainer
   - envs
 
 system:
@@ -10,6 +10,7 @@ seed:
   val: 123
 
 micro_batch_size_per_gpu: 4
+log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu}
 ppo_mini_batch_size: 32
 model_path: Qwen/Qwen2.5-3B-Instruct
 enable_response_mask: True # Enabling response mask could improve stability of rollout/old_log_prob, as P(st|history) are no longer calculated in loss here. See https://docs.google.com/document/d/1bg7obeiKTExuHHBl5uOiSpec5uLDZ2Tgvxy6li5pHX4/edit?usp=sharing for more details.
@@ -28,7 +29,7 @@ actor_rollout_ref:
     target_modules: ${lora.target_modules}
   actor:
     ppo_mini_batch_size: ${ppo_mini_batch_size}  # by default, ppo_mini_batch_size = train_batch_size / 4
-    ppo_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
+    ppo_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu}
     use_ref: True
     entropy_coeff: 0.001
     use_kl_loss: False
@@ -37,24 +38,35 @@ actor_rollout_ref:
     clip_ratio_low: 0.2
     clip_ratio_high: 0.28
     grpo_advantage_length_weight: ${grpo_advantage_length_weight}
+    filter_loss_scaling: "none" # "none", "linear", "sqrt"
+    # Loss aggregation mode: "token-mean" (default), "seq-mean-token-mean" (GRPO), "seq-mean-token-sum" (Dr. GRPO)
+    loss_agg_mode: "token-mean"
     optim:
       betas: [0.9, 0.999]
       lr: 1e-6
   ref:
-    log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
+    log_prob_micro_batch_size_per_gpu: ${log_prob_micro_batch_size_per_gpu}
   rollout:
     name: vllm
-    log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
+    load_format: auto  # load from huggingface instead of dummy (random init)
+    log_prob_micro_batch_size_per_gpu: ${log_prob_micro_batch_size_per_gpu}
     tensor_model_parallel_size: 1
     max_model_len: 3600
     prompt_length: 1 # useless. Just put it here
     response_length: 400 # single-turn response length
-    gpu_memory_utilization: 0.5
+    gpu_memory_utilization: 0.3
     max_num_batched_tokens: 8192 # set only when enable_chunked_prefill is true
     temperature: 1
-    rollout_filter_ratio: 0.25
+    rollout_filter_value: 1.0
+    rollout_filter_strategy: top_p # top_p, top_k, top_k_abs, min_p
     rollout_filter_type: largest # smallest or largest
+    rollout_filter_include_zero: True # whether to include groups with 0 score in the filtering
+    rollout_filter_top_p_prob_mode: linear # top_p mode: score-sum linear rule or original softmax
+    rollout_filter_selection_eps: 0.01 # linear top_p uses threshold = top_p * sum(scores) - eps
+    rollout_filter_empty_stop_steps: 5 # early stop after this many consecutive training steps with 0 kept samples
     rollout_filter_metric: reward_variance
+    gradient_analysis_num_buckets: 6
+    gradient_analysis_bucket_mode: quantile
     enforce_eager: True #  for small models, set both enforce_eager and free_cache_engine to False to make rollout faster
     free_cache_engine: True
     val_kwargs:
@@ -63,7 +75,7 @@ actor_rollout_ref:
 
 critic:
   ppo_mini_batch_size: ${ppo_mini_batch_size} # by default, ppo_mini_batch_size = train_batch_size / 4
-  ppo_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
+  ppo_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu}
   model:
     path: ${model_path}
     lora_rank: ${lora.rank}
@@ -82,15 +94,21 @@ algorithm:
   gamma: 1.0
   lam: 1.0
   high_level_gamma: 0.95
-  adv_estimator: gae
+  adv_estimator: gae  # "gae" for PPO, "grpo" for GRPO/Dr.GRPO
   bi_level_gae: False
+  zero_task_advantage: False  # if True, zero out advantages to remove task-driven policy gradient
+  # Dr. GRPO: set to False to use (R - mean) instead of (R - mean) / std
+  norm_adv_by_std_in_grpo: True
+  # Soft advantage reweighting: scale advantages by (group_std / max_group_std)
+  # This down-weights low reward variance prompts instead of hard filtering
+  soft_advantage_reweight: False
   kl_penalty: kl  # how to estimate kl divergence
   kl_ctrl:
     type: fixed
     kl_coef: 0.000
 
 trainer:
-  project_name: ragen_latest
+  project_name: ragen
   experiment_name: test
   local_log_dir: "results/"
   save_freq: 100
@@ -99,11 +117,19 @@ trainer:
   val_before_train: True
   n_gpus_per_node: 1
   test_freq: 10
-  generations_to_log_to_wandb: 
+  generations_to_log_to_wandb:
     val: 20
   logger: [ 'console', 'wandb' ]
   max_actor_ckpt_to_keep: 1
   max_critic_ckpt_to_keep: 1
+  log_group_rv_table: False
+  gradient_analysis_mode: False
+  gradient_analysis_every: 50
+  gradient_analysis_env_groups: null
+  gradient_analysis_group_size: null
+  gradient_analysis_log_prefilter: False
+  gradient_analysis_only: False
+  exit_after_gradient_analysis: False
 
 agent_proxy:
   context_window_mode: "full" # "full" | "limited_multi_turn" | "single_turn"
@@ -118,6 +144,14 @@ agent_proxy:
   reward_normalization:
     grouping: "state" # state / batch / inductive
     method: "identity" # asym_clip / identity / mean_std
+
+# Collapse detection for diagnosing template collapse vs entropy collapse
+collapse_detection:
+  compute_freq: 5  # Compute every N steps
+  micro_batch_size: 128  # Micro batch size for cross-scoring
+  first_turn_enabled: true  # Compute first-turn metrics
+  multi_turn_enabled: true  # Enable multi-turn sampling for MI computation
+  num_samples: 64  # N or all
 
 es_manager:
   format_penalty: -0.5
@@ -134,11 +168,12 @@ es_manager:
       tags: ["CoordSokoban"]
       n_groups: [8] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
   val:
-    env_groups: 32
-    group_size: 16 # should be set to 1 because when val temperature is set to 0 and group size > 1, there will be repetitive prompts which leads to same trajectory.
+    env_groups: 512
+    group_size: 1 # should be set to 1 because when val temperature is set to 0 and group size > 1, there will be repetitive prompts which leads to same trajectory.
+
     env_configs:
       tags: ["CoordSokoban"]
-      n_groups: [32] # TODO: If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
+      n_groups: [512] # TODO: If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
 
 ctx_manager:
   generation: # go to vllm

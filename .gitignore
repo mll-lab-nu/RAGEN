@@ -69,6 +69,7 @@ local_settings.py
 image_outputs
 
 checkpoints
+model_saving/
 
 # Flask stuff:
 instance/
@@ -117,3 +118,7 @@ tests/e2e/toy_examples/deepspeed/synchronous/output.txt
 
 
 log/
+*.result
+
+# Search data (large files)
+search_data/
