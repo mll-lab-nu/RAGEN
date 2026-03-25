@@ -1,0 +1,545 @@
+#!/bin/bash
+# Batch Size Ablation: Different batch sizes (env_groups × group_size) × filter/no-filter
+# Task: Sokoban only | Model: Qwen2.5-3B | Algorithm: PPO
+# Batch sizes: 8x16 (baseline), 128x1, 64x2, 32x4 — all total 128 samples
+# Filtering rule: filter => top_p=0.9 (linear), nofilter => top_p=1.0
+
+set -euo pipefail
+
+# Defaults
+STEPS=400
+MODEL_NAME="Qwen2.5-3B"
+TASK="sokoban"
+CONFIG="_2_sokoban"
+SAVE_FREQ=-1
+FILTER_MODES=("filter" "nofilter")
+FILTERS_OPTION="all"
+SELECTED_FILTERS=("${FILTER_MODES[@]}")
+
+# Batch size configs: "env_groups:group_size"
+BATCH_SIZES=("8:16" "128:1" "64:2" "32:4")
+BATCH_SIZES_OPTION="all"
+SELECTED_BATCH_SIZES=("${BATCH_SIZES[@]}")
+
+# GPU settings
+GPUS=()
+GPUS_PROVIDED=false
+GPUS_PER_EXP=1
+COOLDOWN_SECONDS=30
+GPU_MEMORY_UTILIZATION=0.3
+RAY_NUM_CPUS=16
+declare -A GPU_LABELS
+
+usage() {
+    echo "Usage: $0 [options]"
+    echo "Options:"
+    echo "  --steps N             Training steps (default: 400)"
+    echo "  --gpus LIST           Comma-separated GPU IDs (default: auto-detect)"
+    echo "  --gpus-per-exp N      GPUs per experiment (default: 1)"
+    echo "  --cooldown SECONDS    Cooldown between runs on the same GPU group (default: 30)"
+    echo "  --gpu-memory-utilization V  Rollout gpu_memory_utilization (default: 0.3)"
+    echo "  --ray-num-cpus N      Max CPUs per task for ray.init (default: 16)"
+    echo "  --save-freq N         Checkpoint save frequency (default: -1 to disable saving)"
+    echo "  --filters LIST        Comma-separated filter modes (filter,nofilter,all). Default: all"
+    echo "  --batch-sizes LIST    Comma-separated batch sizes e.g. 8x16,128x1 (default: all)"
+    echo "  -h, --help            Show this help"
+    exit 0
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --steps) STEPS="$2"; shift 2 ;;
+        --steps=*) STEPS="${1#*=}"; shift ;;
+        --gpus) IFS=',' read -r -a GPUS <<< "$2"; GPUS_PROVIDED=true; shift 2 ;;
+        --gpus=*) IFS=',' read -r -a GPUS <<< "${1#*=}"; GPUS_PROVIDED=true; shift ;;
+        --gpus-per-exp) GPUS_PER_EXP="$2"; shift 2 ;;
+        --gpus-per-exp=*) GPUS_PER_EXP="${1#*=}"; shift ;;
+        --cooldown) COOLDOWN_SECONDS="$2"; shift 2 ;;
+        --cooldown=*) COOLDOWN_SECONDS="${1#*=}"; shift ;;
+        --gpu-memory-utilization) GPU_MEMORY_UTILIZATION="$2"; shift 2 ;;
+        --gpu-memory-utilization=*) GPU_MEMORY_UTILIZATION="${1#*=}"; shift ;;
+        --ray-num-cpus) RAY_NUM_CPUS="$2"; shift 2 ;;
+        --ray-num-cpus=*) RAY_NUM_CPUS="${1#*=}"; shift ;;
+        --save-freq) SAVE_FREQ="$2"; shift 2 ;;
+        --save-freq=*) SAVE_FREQ="${1#*=}"; shift ;;
+        --filters) FILTERS_OPTION="$2"; shift 2 ;;
+        --filters=*) FILTERS_OPTION="${1#*=}"; shift ;;
+        --batch-sizes) BATCH_SIZES_OPTION="$2"; shift 2 ;;
+        --batch-sizes=*) BATCH_SIZES_OPTION="${1#*=}"; shift ;;
+        -h|--help) usage ;;
+        *) echo "Unknown argument: $1"; usage ;;
+    esac
+done
+
+MODEL_PATH="Qwen/${MODEL_NAME}"
+
+if [ "$GPUS_PROVIDED" = false ]; then
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l | tr -d ' ')
+        if [[ "$GPU_COUNT" =~ ^[0-9]+$ ]] && [ "$GPU_COUNT" -gt 0 ]; then
+            GPUS=()
+            for ((i=0; i<GPU_COUNT; i++)); do
+                GPUS+=("$i")
+            done
+        fi
+    fi
+    if [ ${#GPUS[@]} -eq 0 ]; then
+        echo "Warning: failed to auto-detect GPUs, falling back to 0-7" >&2
+        GPUS=(0 1 2 3 4 5 6 7)
+    fi
+fi
+
+if ! [[ "$GPUS_PER_EXP" =~ ^[0-9]+$ ]] || [ "$GPUS_PER_EXP" -lt 1 ]; then
+    echo "Error: --gpus-per-exp must be a positive integer"
+    exit 1
+fi
+if (( ${#GPUS[@]} < GPUS_PER_EXP )); then
+    echo "Error: --gpus-per-exp (${GPUS_PER_EXP}) exceeds available GPUs (${#GPUS[@]})"
+    exit 1
+fi
+if (( ${#GPUS[@]} % GPUS_PER_EXP != 0 )); then
+    echo "Error: GPU count (${#GPUS[@]}) must be divisible by --gpus-per-exp (${GPUS_PER_EXP})"
+    exit 1
+fi
+if ! [[ "$RAY_NUM_CPUS" =~ ^[0-9]+$ ]] || [ "$RAY_NUM_CPUS" -lt 1 ]; then
+    echo "Error: --ray-num-cpus must be a positive integer"
+    exit 1
+fi
+
+GPU_GROUPS=()
+for ((i=0; i<${#GPUS[@]}; i+=GPUS_PER_EXP)); do
+    group="${GPUS[$i]}"
+    for ((j=1; j<GPUS_PER_EXP; j++)); do
+        group+=",${GPUS[$((i+j))]}"
+    done
+    GPU_GROUPS+=("$group")
+done
+NUM_SLOTS=${#GPU_GROUPS[@]}
+
+short_gpu_name() {
+    local name="$1"
+    local cleaned
+    cleaned=$(echo "$name" | sed -E 's/^NVIDIA //; s/^Tesla //; s/^GeForce //; s/^Quadro //; s/^RTX //')
+    if [[ "$cleaned" =~ (B[0-9]{2,3}|H[0-9]{2,3}|A[0-9]{2,3}|L[0-9]{2,3}|V100|T4|P100|K80) ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return
+    fi
+    echo "${cleaned%% *}"
+}
+
+get_gpu_label() {
+    local gpu_id="$1"
+    if [ -n "${GPU_LABELS[$gpu_id]+x}" ]; then
+        echo "${GPU_LABELS[$gpu_id]}"
+        return
+    fi
+    local name=""
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        name=$(nvidia-smi --query-gpu=name --format=csv,noheader -i "$gpu_id" 2>/dev/null | head -1)
+    fi
+    if [ -z "$name" ]; then
+        GPU_LABELS[$gpu_id]="1xGPU${gpu_id}"
+        echo "${GPU_LABELS[$gpu_id]}"
+        return
+    fi
+    local short
+    short=$(short_gpu_name "$name")
+    GPU_LABELS[$gpu_id]="1x${short}"
+    echo "${GPU_LABELS[$gpu_id]}"
+}
+
+get_gpu_model_label() {
+    local models=()
+    local id label model
+    for id in "${GPUS[@]}"; do
+        label=$(get_gpu_label "$id")
+        model="${label#1x}"
+        models+=("$model")
+    done
+    local unique_models=()
+    local m found
+    for m in "${models[@]}"; do
+        found=false
+        for u in "${unique_models[@]}"; do
+            if [ "$u" = "$m" ]; then
+                found=true
+                break
+            fi
+        done
+        if [ "$found" = false ]; then
+            unique_models+=("$m")
+        fi
+    done
+    if [ ${#unique_models[@]} -eq 1 ]; then
+        echo "${unique_models[0]}"
+    else
+        echo "mixed"
+    fi
+}
+
+get_gpu_label_for_list() {
+    local gpu_list="$1"
+    IFS=',' read -r -a ids <<< "$gpu_list"
+    local count=${#ids[@]}
+    if [ "$count" -eq 0 ]; then
+        echo "0xGPU"
+        return
+    fi
+    local first_model
+    first_model="$(get_gpu_label "${ids[0]}")"
+    first_model="${first_model#1x}"
+    local id model
+    for id in "${ids[@]:1}"; do
+        model="$(get_gpu_label "$id")"
+        model="${model#1x}"
+        if [ "$model" != "$first_model" ]; then
+            echo "${count}xmixed"
+            return
+        fi
+    done
+    echo "${count}x${first_model}"
+}
+
+GPU_MODEL_LABEL=$(get_gpu_model_label)
+GPU_LOG_LABEL="${GPUS_PER_EXP}x${GPU_MODEL_LABEL}"
+LOG_FILE="logs/diff_batch_size_${MODEL_NAME}.log"
+RESULT_ROOT="logs"
+CHECKPOINT_ROOT="model_saving/diff_batch_size_${MODEL_NAME}"
+
+mkdir -p logs
+mkdir -p "$RESULT_ROOT"
+mkdir -p "$CHECKPOINT_ROOT"
+
+echo "=== Batch Size Ablation Runner: $(date) ===" | tee "$LOG_FILE"
+echo "Task: ${TASK} | Model: ${MODEL_NAME} | Algo: PPO | Steps: ${STEPS} | GPU per exp: ${GPUS_PER_EXP}x${GPU_MODEL_LABEL}" | tee -a "$LOG_FILE"
+echo "GPUS: ${GPUS[*]} | groups: ${GPU_GROUPS[*]} | cooldown=${COOLDOWN_SECONDS}s" | tee -a "$LOG_FILE"
+
+run_experiment() {
+    local filter=$1
+    local batch_label=$2
+    local env_groups=$3
+    local group_size=$4
+    local gpu_list=$5
+
+    local algo="PPO"
+
+    local filter_value
+    if [ "$filter" = "filter" ]; then
+        filter_value=0.9
+    else
+        filter_value=1.0
+    fi
+    local filter_strategy="top_p"
+
+    local common_overrides=(
+        "actor_rollout_ref.actor.use_kl_loss=False"
+        "actor_rollout_ref.actor.kl_loss_type=low-var-kl"
+        "actor_rollout_ref.actor.kl_loss_coef=0.001"
+        "actor_rollout_ref.actor.entropy_coeff=0.001"
+        "actor_rollout_ref.actor.entropy_from_logits_with_chunking=True"
+        "actor_rollout_ref.actor.filter_loss_scaling=none"
+        "actor_rollout_ref.rollout.gpu_memory_utilization=${GPU_MEMORY_UTILIZATION}"
+        "actor_rollout_ref.rollout.rollout_filter_strategy=${filter_strategy}"
+        "actor_rollout_ref.rollout.rollout_filter_top_p_prob_mode=softmax"
+        "actor_rollout_ref.rollout.rollout_filter_type=largest"
+        "actor_rollout_ref.rollout.rollout_filter_metric=reward_variance"
+        "actor_rollout_ref.rollout.rollout_filter_include_zero=True"
+    )
+
+    local checkpoint_overrides=(
+        "actor_rollout_ref.actor.checkpoint.save_contents=[model]"
+        "critic.checkpoint.save_contents=[model]"
+    )
+
+    # PPO algorithm overrides
+    local algo_overrides="algorithm.adv_estimator=gae actor_rollout_ref.actor.loss_agg_mode=token-mean"
+    read -r -a algo_args <<< "$algo_overrides"
+
+    local name="${TASK}-PPO-${filter}-bs${batch_label}-${MODEL_NAME}"
+    local task_dir="${RESULT_ROOT}/diff_batch_size_${TASK}_${MODEL_NAME}"
+    local log_path="${task_dir}/${name}.log"
+    local checkpoint_dir="${CHECKPOINT_ROOT}/${TASK}/${filter}/${batch_label}/${name}"
+    local gpus_per_exp
+    IFS=',' read -r -a gpu_ids <<< "$gpu_list"
+    gpus_per_exp=${#gpu_ids[@]}
+
+    mkdir -p "$task_dir"
+    mkdir -p "${checkpoint_dir}"
+    START=$(date +%s)
+    CUDA_VISIBLE_DEVICES="${gpu_list}" python train.py --config-name "$CONFIG" \
+        model_path="${MODEL_PATH}" \
+        trainer.project_name="ragen_rebuttal_batch_size" \
+        trainer.total_training_steps="${STEPS}" \
+        trainer.experiment_name="${name}" \
+        trainer.save_freq="${SAVE_FREQ}" \
+        trainer.default_local_dir="${checkpoint_dir}" \
+        trainer.logger="['console','wandb']" \
+        trainer.val_before_train=True \
+        trainer.n_gpus_per_node="${gpus_per_exp}" \
+        ray_kwargs.ray_init.num_cpus="${RAY_NUM_CPUS}" \
+        system.CUDA_VISIBLE_DEVICES="'${gpu_list}'" \
+        actor_rollout_ref.rollout.rollout_filter_value="${filter_value}" \
+        es_manager.train.env_groups="${env_groups}" \
+        es_manager.train.group_size="${group_size}" \
+        "${common_overrides[@]}" \
+        "${checkpoint_overrides[@]}" \
+        "${algo_args[@]}" \
+        2>&1 | tee "$log_path"
+    EXIT_CODE=${PIPESTATUS[0]}
+    END=$(date +%s)
+
+    TOTAL_TIME=$((END - START))
+    timing_values=()
+    mapfile -t timing_values < <(
+        python - "$log_path" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+def last(pattern, text):
+    matches = re.findall(pattern, text)
+    return matches[-1] if matches else ""
+
+try:
+    text = Path(sys.argv[1]).read_text(errors="ignore")
+except Exception:
+    text = ""
+
+patterns = [
+    r"timing_s/train_total[:\s]+([\d.]+)",
+    r"timing_s/eval_total[:\s]+([\d.]+)",
+    r"timing_s/total[:\s]+([\d.]+)",
+]
+
+for pattern in patterns:
+    print(last(pattern, text))
+PY
+    )
+    TRAIN_TIME_RAW="${timing_values[0]:-}"
+    EVAL_TIME_RAW="${timing_values[1]:-}"
+    TOTAL_TIME_RAW="${timing_values[2]:-}"
+    TRAIN_TIME=$([ -n "$TRAIN_TIME_RAW" ] && printf "%.2f" "$TRAIN_TIME_RAW" || echo "N/A")
+    EVAL_TIME=$([ -n "$EVAL_TIME_RAW" ] && printf "%.2f" "$EVAL_TIME_RAW" || echo "N/A")
+    TOTAL_TIME_METRIC=$([ -n "$TOTAL_TIME_RAW" ] && printf "%.2f" "$TOTAL_TIME_RAW" || echo "N/A")
+
+    local status="success"
+    local error_line=""
+    if [ $EXIT_CODE -ne 0 ]; then
+        status="fail"
+        error_line=$(tail -2 "$log_path" | tr '\n' ' ')
+    fi
+
+    local gpu_label
+    gpu_label=$(get_gpu_label_for_list "$gpu_list")
+    local summary_line="task=${TASK} | algo=PPO | filter=${filter} | batch=${batch_label} (${env_groups}x${group_size}) | model=${MODEL_NAME} | steps=${STEPS} | filter=${filter_strategy}:${filter_value} | train_time=${TRAIN_TIME}s | eval_time=${EVAL_TIME}s | total_time=${TOTAL_TIME_METRIC}s | wall_time=${TOTAL_TIME}s | gpu=${gpu_label} | status=${status}"
+    echo "${summary_line}" > "${task_dir}/${name}.result"
+    echo "${summary_line}" | tee -a "$LOG_FILE"
+    if [ "$status" = "fail" ]; then
+        echo "  error: ${error_line}" | tee -a "$LOG_FILE"
+    fi
+    return 0
+}
+
+EXPERIMENTS=()
+GROUP_LABELS=()
+CURRENT_GROUP=""
+
+set_group() {
+    CURRENT_GROUP="$1"
+    GROUP_LABELS+=("$1")
+}
+
+add_experiment() {
+    local filter=$1
+    local batch_label=$2
+    local env_groups=$3
+    local group_size=$4
+    EXPERIMENTS+=("${CURRENT_GROUP}|${filter}|${batch_label}|${env_groups}|${group_size}")
+}
+
+resolve_filter_selection() {
+    local raw="$1"
+    if [ -z "$raw" ] || [ "$raw" = "all" ]; then
+        SELECTED_FILTERS=("${FILTER_MODES[@]}")
+        return
+    fi
+    IFS=',' read -r -a candidates <<< "$raw"
+    SELECTED_FILTERS=()
+    for candidate in "${candidates[@]}"; do
+        candidate="${candidate// /}"
+        case "$candidate" in
+            filter|nofilter)
+                SELECTED_FILTERS+=("$candidate")
+                ;;
+            "")
+                continue
+                ;;
+            *)
+                echo "Unknown filter mode: $candidate" >&2
+                exit 1
+                ;;
+        esac
+    done
+    if [ ${#SELECTED_FILTERS[@]} -eq 0 ]; then
+        echo "No valid filters selected via --filters" >&2
+        exit 1
+    fi
+}
+
+resolve_batch_size_selection() {
+    local raw="$1"
+    if [ -z "$raw" ] || [ "$raw" = "all" ]; then
+        SELECTED_BATCH_SIZES=("${BATCH_SIZES[@]}")
+        return
+    fi
+    # Accept formats: 8x16,128x1 -> convert to 8:16,128:1
+    IFS=',' read -r -a candidates <<< "$raw"
+    SELECTED_BATCH_SIZES=()
+    for candidate in "${candidates[@]}"; do
+        candidate="${candidate// /}"
+        # Convert 8x16 to 8:16
+        candidate="${candidate//x/:}"
+        local valid=false
+        for bs in "${BATCH_SIZES[@]}"; do
+            if [ "$bs" = "$candidate" ]; then
+                valid=true
+                break
+            fi
+        done
+        if [ "$valid" = true ]; then
+            SELECTED_BATCH_SIZES+=("$candidate")
+        else
+            echo "Unknown batch size: $candidate (valid: ${BATCH_SIZES[*]//:/x})" >&2
+            exit 1
+        fi
+    done
+    if [ ${#SELECTED_BATCH_SIZES[@]} -eq 0 ]; then
+        echo "No valid batch sizes selected via --batch-sizes" >&2
+        exit 1
+    fi
+}
+
+resolve_filter_selection "$FILTERS_OPTION"
+resolve_batch_size_selection "$BATCH_SIZES_OPTION"
+
+for bs in "${SELECTED_BATCH_SIZES[@]}"; do
+    IFS=':' read -r env_groups group_size <<< "$bs"
+    batch_label="${env_groups}x${group_size}"
+    set_group "Batch: ${batch_label}"
+    for filter in "${SELECTED_FILTERS[@]}"; do
+        add_experiment "$filter" "$batch_label" "$env_groups" "$group_size"
+    done
+done
+
+echo "Experiments: ${#EXPERIMENTS[@]} (batch sizes: ${SELECTED_BATCH_SIZES[*]//:/x} × filters: ${SELECTED_FILTERS[*]})" | tee -a "$LOG_FILE"
+
+QUEUE_FILE=$(mktemp -t ragen_batch_size_queue.XXXXXX)
+QUEUE_LOCK="${QUEUE_FILE}.lock"
+echo 0 > "$QUEUE_FILE"
+USE_FLOCK=false
+QUEUE_LOCK_DIR="${QUEUE_LOCK}.d"
+MAIN_PID=$$
+
+cleanup_queue() {
+    if [ "$$" -ne "$MAIN_PID" ]; then
+        return
+    fi
+    rm -f "$QUEUE_FILE" "$QUEUE_LOCK"
+    rmdir "$QUEUE_LOCK_DIR" 2>/dev/null || true
+}
+trap cleanup_queue EXIT
+
+if command -v flock >/dev/null 2>&1; then
+    USE_FLOCK=true
+fi
+
+next_experiment_index() {
+    local idx
+    if [ "$USE_FLOCK" = true ]; then
+        flock -x "$QUEUE_LOCK_FD"
+        idx=$(cat "$QUEUE_FILE")
+        if [ -z "$idx" ]; then
+            idx=0
+        fi
+        if (( idx >= ${#EXPERIMENTS[@]} )); then
+            flock -u "$QUEUE_LOCK_FD"
+            echo -1
+            return
+        fi
+        echo $((idx + 1)) > "$QUEUE_FILE"
+        flock -u "$QUEUE_LOCK_FD"
+        echo "$idx"
+        return
+    fi
+
+    while ! mkdir "$QUEUE_LOCK_DIR" 2>/dev/null; do
+        sleep 0.05
+    done
+    idx=$(cat "$QUEUE_FILE")
+    if [ -z "$idx" ]; then
+        idx=0
+    fi
+    if (( idx >= ${#EXPERIMENTS[@]} )); then
+        rmdir "$QUEUE_LOCK_DIR"
+        echo -1
+        return
+    fi
+    echo $((idx + 1)) > "$QUEUE_FILE"
+    rmdir "$QUEUE_LOCK_DIR"
+    echo "$idx"
+}
+
+run_queue_for_slot() {
+    local gpu_list=$1
+    if [ "$USE_FLOCK" = true ]; then
+        exec {QUEUE_LOCK_FD}>"$QUEUE_LOCK"
+    fi
+    while true; do
+        local idx
+        idx=$(next_experiment_index)
+        if [ "$idx" -lt 0 ]; then
+            break
+        fi
+        local exp="${EXPERIMENTS[$idx]}"
+        IFS='|' read -r exp_group filter batch_label env_groups group_size <<< "$exp"
+        run_experiment "$filter" "$batch_label" "$env_groups" "$group_size" "$gpu_list" || true
+        if [ "$COOLDOWN_SECONDS" -gt 0 ]; then
+            sleep "$COOLDOWN_SECONDS"
+        fi
+    done
+    if [ "$USE_FLOCK" = true ]; then
+        exec {QUEUE_LOCK_FD}>&-
+    fi
+}
+
+pids=()
+for idx in "${!GPU_GROUPS[@]}"; do
+    run_queue_for_slot "${GPU_GROUPS[$idx]}" &
+    pids+=("$!")
+done
+
+for pid in "${pids[@]}"; do
+    wait "$pid"
+done
+
+{
+    echo ""
+    echo "=== Grouped Summary ==="
+    echo "GPU per exp: ${GPUS_PER_EXP}x${GPU_MODEL_LABEL} | Model: ${MODEL_NAME} | Task: ${TASK} | Algo: PPO | Steps: ${STEPS}"
+    for group_label in "${GROUP_LABELS[@]}"; do
+        echo "=== ${group_label} ==="
+        for exp in "${EXPERIMENTS[@]}"; do
+            IFS='|' read -r exp_group filter batch_label env_groups group_size <<< "$exp"
+            if [ "$exp_group" != "$group_label" ]; then
+                continue
+            fi
+            name="${TASK}-PPO-${filter}-bs${batch_label}-${MODEL_NAME}"
+            task_dir="${RESULT_ROOT}/diff_batch_size_${TASK}_${MODEL_NAME}"
+            if [ -f "${task_dir}/${name}.result" ]; then
+                cat "${task_dir}/${name}.result"
+            else
+                echo "task=${TASK} | algo=PPO | filter=${filter} | batch=${batch_label} | model=${MODEL_NAME} | status=missing"
+            fi
+        done
+    done
+} | tee -a "$LOG_FILE"
