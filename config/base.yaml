@@ -65,6 +65,8 @@ actor_rollout_ref:
     rollout_filter_selection_eps: 0.01 # linear top_p uses threshold = top_p * sum(scores) - eps
     rollout_filter_empty_stop_steps: 5 # early stop after this many consecutive training steps with 0 kept samples
     rollout_filter_metric: reward_variance
+    rollout_filter_percentile_low: 0.0   # percentile_range: keep groups ranked in [low, high)
+    rollout_filter_percentile_high: 1.0  # e.g. Q1=(0.0,0.25), Q2=(0.25,0.5), etc.
     gradient_analysis_num_buckets: 6
     gradient_analysis_bucket_mode: quantile
     enforce_eager: True #  for small models, set both enforce_eager and free_cache_engine to False to make rollout faster

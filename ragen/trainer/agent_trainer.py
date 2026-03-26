@@ -613,6 +613,8 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             selection_eps=getattr(rollout_cfg, "rollout_filter_selection_eps", 0.01),
             bucket_count=getattr(rollout_cfg, "gradient_analysis_num_buckets", 6),
             bucket_mode=getattr(rollout_cfg, "gradient_analysis_bucket_mode", "quantile"),
+            percentile_low=getattr(rollout_cfg, "rollout_filter_percentile_low", 0.0),
+            percentile_high=getattr(rollout_cfg, "rollout_filter_percentile_high", 1.0),
         )
         if self.gradient_analysis_config is not None:
             analysis_rollout_cfg = self.gradient_analysis_config.actor_rollout_ref.rollout
@@ -633,6 +635,8 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 selection_eps=getattr(analysis_rollout_cfg, "rollout_filter_selection_eps", 0.01),
                 bucket_count=getattr(analysis_rollout_cfg, "gradient_analysis_num_buckets", 6),
                 bucket_mode=getattr(analysis_rollout_cfg, "gradient_analysis_bucket_mode", "quantile"),
+                percentile_low=getattr(analysis_rollout_cfg, "rollout_filter_percentile_low", 0.0),
+                percentile_high=getattr(analysis_rollout_cfg, "rollout_filter_percentile_high", 1.0),
             )
         else:
             self.gradient_analysis_rollout_filter = self.rollout_filter

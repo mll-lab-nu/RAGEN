@@ -26,6 +26,9 @@ class RolloutFilterConfig:
     selection_eps: float = 0.01
     bucket_count: int = 6
     bucket_mode: str = "quantile"
+    # percentile_range strategy: keep groups whose rank falls in [low, high)
+    percentile_low: float = 0.0
+    percentile_high: float = 1.0
 
 
 class RolloutFilter:
@@ -180,7 +183,23 @@ class RolloutFilter:
             return indices[mask]
 
             return indices[mask]
-            
+
+        elif self.strategy == "percentile_range":
+            # Keep groups whose rank (by score) falls in [percentile_low, percentile_high).
+            # filter_type="largest" → rank 0 is the highest-scoring group.
+            if self.filter_type == "largest":
+                sorted_idx = torch.argsort(scores, descending=True)
+            elif self.filter_type == "smallest":
+                sorted_idx = torch.argsort(scores, descending=False)
+            else:
+                raise ValueError(f"Invalid rollout filter type: {self.filter_type}")
+
+            N = sorted_idx.numel()
+            lo = round(self.config.percentile_low * N)
+            hi = round(self.config.percentile_high * N)
+            hi = max(lo + 1, min(hi, N))   # at least 1, at most N
+            return indices[sorted_idx[lo:hi]]
+
         else:
              raise ValueError(f"Unknown strategy: {self.strategy}")
 
@@ -760,6 +779,77 @@ class EntropyRolloutFilter(RolloutFilter):
         return batch, metrics
 
 
+def _max_variance_mask(rewards: torch.Tensor, keep_k: int) -> torch.Tensor:
+    """Return a boolean mask selecting keep_k elements of rewards with maximum variance.
+
+    The optimal subset for variance maximization is always of the form
+    "bottom-j + top-(keep_k-j)" (provable by exchange argument: any middle element
+    can be replaced by a more extreme one to increase variance). We enumerate all
+    keep_k+1 such splits and pick the best one. O(keep_k) per call.
+
+    # rewards: 1-D tensor of any real values; keep_k <= len(rewards)
+    """
+    G = len(rewards)
+    if keep_k >= G:
+        return torch.ones(G, dtype=torch.bool, device=rewards.device)
+
+    sorted_idx = torch.argsort(rewards)  # ascending
+    best_var, best_j = -1.0, 0
+
+    for j in range(keep_k + 1):
+        top_count = keep_k - j
+        bottom_part = sorted_idx[:j]
+        top_part = sorted_idx[G - top_count:] if top_count > 0 else sorted_idx[G:]
+        selected = rewards[torch.cat([bottom_part, top_part])]
+        v = selected.var().item() if keep_k > 1 else 0.0
+        if v > best_var:
+            best_var, best_j = v, j
+
+    top_count = keep_k - best_j
+    mask = torch.zeros(G, dtype=torch.bool, device=rewards.device)
+    if best_j > 0:
+        mask[sorted_idx[:best_j]] = True
+    if top_count > 0:
+        mask[sorted_idx[G - top_count:]] = True
+    return mask
+
+
+class WithinGroupTrajectoryFilter(RolloutFilter):
+    """Keeps all prompt groups but selects keep_ratio * G trajectories per group
+    to maximize within-group reward variance.
+
+    Unlike prompt-level filters (which drop entire groups), this never drops a group.
+    Useful for isolating whether filtering benefit comes from signal quality (SNR)
+    rather than prompt selection bias (Exp 5 in rebuttal).
+
+    Config: value = keep_ratio (e.g. 0.5 keeps 50% of trajectories per group).
+    """
+
+    def filter(self, batch: DataProto) -> Tuple[DataProto, Dict[str, torch.Tensor]]:
+        G = self.group_size
+        N = self.num_groups
+        keep_k = max(1, round(self.value * G))
+
+        # Sum token-level rewards to get one scalar per trajectory
+        rewards = batch.batch["original_rm_scores"].sum(dim=-1)  # [N*G]
+
+        keep_mask = torch.zeros(N * G, dtype=torch.bool)
+        for i in range(N):
+            group_rewards = rewards[i * G : (i + 1) * G]
+            within_mask = _max_variance_mask(group_rewards, keep_k)
+            keep_mask[i * G : (i + 1) * G] = within_mask.cpu()
+
+        batch = self._apply_mask(batch, keep_mask)
+
+        metrics = {
+            "rollout/within_group_keep_k": torch.tensor(float(keep_k)),
+            "rollout/within_group_keep_ratio": torch.tensor(keep_k / G),
+            "rollout/filter_kept_count": torch.tensor(float(N * keep_k)),
+            "rollout/filter_kept_ratio": torch.tensor(float(keep_k) / G),
+        }
+        return batch, metrics
+
+
 # Backwards compatibility: preserve older class names.
 RewardVarianceRolloutFilter = RewardRolloutFilter
 EntropyVarianceRolloutFilter = EntropyRolloutFilter
@@ -778,6 +868,8 @@ def build_rollout_filter(
     selection_eps: float = 0.01,
     bucket_count: int = 6,
     bucket_mode: str = "quantile",
+    percentile_low: float = 0.0,
+    percentile_high: float = 1.0,
 ) -> RolloutFilter:
     metric = (metric or "reward_variance").lower()
     metric = {
@@ -797,7 +889,12 @@ def build_rollout_filter(
         selection_eps=selection_eps,
         bucket_count=bucket_count,
         bucket_mode=bucket_mode,
+        percentile_low=percentile_low,
+        percentile_high=percentile_high,
     )
+
+    if strategy == "within_group":
+        return WithinGroupTrajectoryFilter(config)
 
     if metric == "length":
         return LengthRolloutFilter(config)
