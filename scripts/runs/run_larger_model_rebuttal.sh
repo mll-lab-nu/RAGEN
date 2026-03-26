@@ -17,7 +17,7 @@ SELECTED_FILTERS=("${FILTER_MODES[@]}")
 # GPU settings
 GPUS=()
 GPUS_PROVIDED=false
-GPUS_PER_EXP=1
+GPUS_PER_EXP=4
 COOLDOWN_SECONDS=30
 GPU_MEMORY_UTILIZATION=0.4
 RAY_NUM_CPUS=16
@@ -244,6 +244,7 @@ run_experiment() {
         "actor_rollout_ref.actor.entropy_coeff=0.001"
         "actor_rollout_ref.actor.entropy_from_logits_with_chunking=True"
         "actor_rollout_ref.actor.filter_loss_scaling=none"
+        "actor_rollout_ref.rollout.tensor_model_parallel_size=4"
         "actor_rollout_ref.rollout.gpu_memory_utilization=${GPU_MEMORY_UTILIZATION}"
         "actor_rollout_ref.rollout.rollout_filter_strategy=${filter_strategy}"
         "actor_rollout_ref.rollout.rollout_filter_top_p_prob_mode=linear"

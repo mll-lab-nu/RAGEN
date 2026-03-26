@@ -281,6 +281,7 @@ run_experiment() {
         actor_rollout_ref.rollout.rollout_filter_value="${filter_value}" \
         es_manager.train.env_groups="${env_groups}" \
         es_manager.train.group_size="${group_size}" \
+        "es_manager.train.env_configs.n_groups=[${env_groups}]" \
         "${common_overrides[@]}" \
         "${checkpoint_overrides[@]}" \
         "${algo_args[@]}" \
