@@ -33,8 +33,10 @@ from verl.utils.py_functional import append_to_dict
 from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
 from verl.utils.torch_functional import logprobs_from_logits
 from verl.utils.ulysses import gather_outpus_and_unpad, ulysses_pad_and_slice_inputs
-from verl.utils.device import get_device_id
+from verl.utils.device import get_device_id, get_torch_device
 from verl.workers.actor import BasePPOActor
+
+import psutil
 
 from peft import PeftModel
 
@@ -478,4 +480,7 @@ class DataParallelPPOActor(BasePPOActor):
                     data = {"actor/grad_norm": grad_norm.detach().item()}
                     append_to_dict(metrics, data)
         self.actor_optimizer.zero_grad()
+        metrics["perf/max_memory_allocated_gb"] = get_torch_device().max_memory_allocated() / (1024**3)
+        metrics["perf/max_memory_reserved_gb"] = get_torch_device().max_memory_reserved() / (1024**3)
+        metrics["perf/cpu_memory_used_gb"] = psutil.virtual_memory().used / (1024**3)
         return metrics
