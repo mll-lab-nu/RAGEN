@@ -1,5 +1,5 @@
 #!/bin/bash
-# Model Size: Different model sizes (7B/32B) × tasks × filter/no-filter
+# Larger-Model Rebuttal: Larger model × task × filter/no-filter
 # Algorithm: PPO only
 # Filtering rule: filter => top_p=0.9, nofilter => top_p=1.0
 
@@ -7,8 +7,8 @@ set -euo pipefail
 
 # Defaults
 STEPS=400
-MODEL_NAMES=("Qwen2.5-7B" "Qwen2.5-32B")
-TASKS=("sokoban" "frozenlake" "webshop" "metamathqa" "countdown")
+MODEL_NAMES=("Qwen2.5-14B")
+TASKS=("sokoban")
 SAVE_FREQ=-1
 FILTER_MODES=("filter" "nofilter")
 FILTERS_OPTION="all"
@@ -19,7 +19,7 @@ GPUS=()
 GPUS_PROVIDED=false
 GPUS_PER_EXP=4
 COOLDOWN_SECONDS=30
-GPU_MEMORY_UTILIZATION=0.4
+GPU_MEMORY_UTILIZATION=0.3
 RAY_NUM_CPUS=16
 declare -A GPU_LABELS
 
@@ -27,12 +27,12 @@ usage() {
     echo "Usage: $0 [options]"
     echo "Options:"
     echo "  --steps N             Training steps (default: 400)"
-    echo "  --tasks LIST          Comma-separated tasks (default: sokoban,frozenlake,webshop,metamathqa,countdown)"
-    echo "  --models LIST         Comma-separated model names (default: Qwen2.5-7B,Qwen2.5-32B)"
+    echo "  --tasks LIST          Comma-separated tasks (default: sokoban)"
+    echo "  --models LIST         Comma-separated model names (default: Qwen2.5-14B)"
     echo "  --gpus LIST           Comma-separated GPU IDs (default: auto-detect)"
-    echo "  --gpus-per-exp N      GPUs per experiment (default: 1)"
+    echo "  --gpus-per-exp N      GPUs per experiment (default: 4)"
     echo "  --cooldown SECONDS    Cooldown between runs on the same GPU group (default: 30)"
-    echo "  --gpu-memory-utilization V  Rollout gpu_memory_utilization (default: 0.3)"
+    echo "  --gpu-memory-utilization V  Rollout gpu_memory_utilization (default: 0.4)"
     echo "  --ray-num-cpus N      Max CPUs per task for ray.init (default: 16)"
     echo "  --save-freq N         Checkpoint save frequency (default: -1 to disable saving)"
     echo "  --filters LIST        Comma-separated filter modes (filter,nofilter,all). Default: all"
@@ -244,13 +244,26 @@ run_experiment() {
         "actor_rollout_ref.actor.entropy_coeff=0.001"
         "actor_rollout_ref.actor.entropy_from_logits_with_chunking=True"
         "actor_rollout_ref.actor.filter_loss_scaling=none"
-        "actor_rollout_ref.rollout.tensor_model_parallel_size=4"
+        "actor_rollout_ref.rollout.tensor_model_parallel_size=1"
+        "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1"
+        "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1"
+        "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1"
         "actor_rollout_ref.rollout.gpu_memory_utilization=${GPU_MEMORY_UTILIZATION}"
+        "actor_rollout_ref.model.enable_gradient_checkpointing=True"
+        "actor_rollout_ref.actor.fsdp_config.param_offload=False"
+        "actor_rollout_ref.actor.fsdp_config.optimizer_offload=False"
+        "actor_rollout_ref.ref.fsdp_config.param_offload=False"
+        "critic.ppo_micro_batch_size_per_gpu=1"
+        "critic.model.fsdp_config.param_offload=False"
+        "critic.model.fsdp_config.optimizer_offload=False"
         "actor_rollout_ref.rollout.rollout_filter_strategy=${filter_strategy}"
         "actor_rollout_ref.rollout.rollout_filter_top_p_prob_mode=linear"
         "actor_rollout_ref.rollout.rollout_filter_selection_eps=0.01"
         "actor_rollout_ref.rollout.rollout_filter_type=largest"
         "actor_rollout_ref.rollout.rollout_filter_metric=reward_variance"
+        "es_manager.train.group_size=8"
+        "collapse_detection.first_turn_enabled=False"
+        "collapse_detection.multi_turn_enabled=False"
     )
 
     # Per guide: linear filter => include_zero=False; nofilter => include_zero=True

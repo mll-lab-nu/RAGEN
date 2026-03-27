@@ -1,7 +1,7 @@
 #!/bin/bash
-# Batch Size Ablation: Different batch sizes (env_groups × group_size) × filter/no-filter
+# Grouping Ablation: Different env_groups × group_size layouts × filter/no-filter
 # Task: Sokoban only | Model: Qwen2.5-3B | Algorithm: PPO
-# Batch sizes: 8x16 (baseline), 128x1, 64x2, 32x4 — all total 128 samples
+# Group layouts: 8x16 (baseline), 128x1, 64x2, 32x4 — all total 128 samples
 # Filtering rule: filter => top_p=0.9 (linear), nofilter => top_p=1.0
 
 set -euo pipefail
@@ -16,10 +16,10 @@ FILTER_MODES=("filter" "nofilter")
 FILTERS_OPTION="all"
 SELECTED_FILTERS=("${FILTER_MODES[@]}")
 
-# Batch size configs: "env_groups:group_size"
-BATCH_SIZES=("8:16" "128:1" "64:2" "32:4")
-BATCH_SIZES_OPTION="all"
-SELECTED_BATCH_SIZES=("${BATCH_SIZES[@]}")
+# Group layout configs: "env_groups:group_size"
+GROUP_LAYOUTS=("8:16" "128:1" "64:2" "32:4")
+GROUP_LAYOUTS_OPTION="all"
+SELECTED_GROUP_LAYOUTS=("${GROUP_LAYOUTS[@]}")
 
 # GPU settings
 GPUS=()
@@ -41,7 +41,7 @@ usage() {
     echo "  --ray-num-cpus N      Max CPUs per task for ray.init (default: 16)"
     echo "  --save-freq N         Checkpoint save frequency (default: -1 to disable saving)"
     echo "  --filters LIST        Comma-separated filter modes (filter,nofilter,all). Default: all"
-    echo "  --batch-sizes LIST    Comma-separated batch sizes e.g. 8x16,128x1 (default: all)"
+    echo "  --group-layouts LIST  Comma-separated env_groups x group_size layouts e.g. 8x16,128x1 (default: all)"
     echo "  -h, --help            Show this help"
     exit 0
 }
@@ -64,8 +64,10 @@ while [ $# -gt 0 ]; do
         --save-freq=*) SAVE_FREQ="${1#*=}"; shift ;;
         --filters) FILTERS_OPTION="$2"; shift 2 ;;
         --filters=*) FILTERS_OPTION="${1#*=}"; shift ;;
-        --batch-sizes) BATCH_SIZES_OPTION="$2"; shift 2 ;;
-        --batch-sizes=*) BATCH_SIZES_OPTION="${1#*=}"; shift ;;
+        --group-layouts) GROUP_LAYOUTS_OPTION="$2"; shift 2 ;;
+        --group-layouts=*) GROUP_LAYOUTS_OPTION="${1#*=}"; shift ;;
+        --batch-sizes) GROUP_LAYOUTS_OPTION="$2"; shift 2 ;;
+        --batch-sizes=*) GROUP_LAYOUTS_OPTION="${1#*=}"; shift ;;
         -h|--help) usage ;;
         *) echo "Unknown argument: $1"; usage ;;
     esac
@@ -202,21 +204,21 @@ get_gpu_label_for_list() {
 
 GPU_MODEL_LABEL=$(get_gpu_model_label)
 GPU_LOG_LABEL="${GPUS_PER_EXP}x${GPU_MODEL_LABEL}"
-LOG_FILE="logs/diff_batch_size_${MODEL_NAME}.log"
+LOG_FILE="logs/diff_grouping_${MODEL_NAME}.log"
 RESULT_ROOT="logs"
-CHECKPOINT_ROOT="model_saving/diff_batch_size_${MODEL_NAME}"
+CHECKPOINT_ROOT="model_saving/diff_grouping_${MODEL_NAME}"
 
 mkdir -p logs
 mkdir -p "$RESULT_ROOT"
 mkdir -p "$CHECKPOINT_ROOT"
 
-echo "=== Batch Size Ablation Runner: $(date) ===" | tee "$LOG_FILE"
+echo "=== Grouping Ablation Runner: $(date) ===" | tee "$LOG_FILE"
 echo "Task: ${TASK} | Model: ${MODEL_NAME} | Algo: PPO | Steps: ${STEPS} | GPU per exp: ${GPUS_PER_EXP}x${GPU_MODEL_LABEL}" | tee -a "$LOG_FILE"
 echo "GPUS: ${GPUS[*]} | groups: ${GPU_GROUPS[*]} | cooldown=${COOLDOWN_SECONDS}s" | tee -a "$LOG_FILE"
 
 run_experiment() {
     local filter=$1
-    local batch_label=$2
+    local layout_label=$2
     local env_groups=$3
     local group_size=$4
     local gpu_list=$5
@@ -255,10 +257,10 @@ run_experiment() {
     local algo_overrides="algorithm.adv_estimator=gae actor_rollout_ref.actor.loss_agg_mode=token-mean"
     read -r -a algo_args <<< "$algo_overrides"
 
-    local name="${TASK}-PPO-${filter}-bs${batch_label}-${MODEL_NAME}"
-    local task_dir="${RESULT_ROOT}/diff_batch_size_${TASK}_${MODEL_NAME}"
+    local name="${TASK}-PPO-${filter}-grp${layout_label}-${MODEL_NAME}"
+    local task_dir="${RESULT_ROOT}/diff_grouping_${TASK}_${MODEL_NAME}"
     local log_path="${task_dir}/${name}.log"
-    local checkpoint_dir="${CHECKPOINT_ROOT}/${TASK}/${filter}/${batch_label}/${name}"
+    local checkpoint_dir="${CHECKPOINT_ROOT}/${TASK}/${filter}/${layout_label}/${name}"
     local gpus_per_exp
     IFS=',' read -r -a gpu_ids <<< "$gpu_list"
     gpus_per_exp=${#gpu_ids[@]}
@@ -268,7 +270,7 @@ run_experiment() {
     START=$(date +%s)
     CUDA_VISIBLE_DEVICES="${gpu_list}" python train.py --config-name "$CONFIG" \
         model_path="${MODEL_PATH}" \
-        trainer.project_name="ragen_rebuttal_batch_size" \
+        trainer.project_name="ragen_rebuttal_grouping" \
         trainer.total_training_steps="${STEPS}" \
         trainer.experiment_name="${name}" \
         trainer.save_freq="${SAVE_FREQ}" \
@@ -332,7 +334,7 @@ PY
 
     local gpu_label
     gpu_label=$(get_gpu_label_for_list "$gpu_list")
-    local summary_line="task=${TASK} | algo=PPO | filter=${filter} | batch=${batch_label} (${env_groups}x${group_size}) | model=${MODEL_NAME} | steps=${STEPS} | filter=${filter_strategy}:${filter_value} | train_time=${TRAIN_TIME}s | eval_time=${EVAL_TIME}s | total_time=${TOTAL_TIME_METRIC}s | wall_time=${TOTAL_TIME}s | gpu=${gpu_label} | status=${status}"
+    local summary_line="task=${TASK} | algo=PPO | filter=${filter} | grouping=${layout_label} (${env_groups}x${group_size}) | model=${MODEL_NAME} | steps=${STEPS} | filter=${filter_strategy}:${filter_value} | train_time=${TRAIN_TIME}s | eval_time=${EVAL_TIME}s | total_time=${TOTAL_TIME_METRIC}s | wall_time=${TOTAL_TIME}s | gpu=${gpu_label} | status=${status}"
     echo "${summary_line}" > "${task_dir}/${name}.result"
     echo "${summary_line}" | tee -a "$LOG_FILE"
     if [ "$status" = "fail" ]; then
@@ -352,10 +354,10 @@ set_group() {
 
 add_experiment() {
     local filter=$1
-    local batch_label=$2
+    local layout_label=$2
     local env_groups=$3
     local group_size=$4
-    EXPERIMENTS+=("${CURRENT_GROUP}|${filter}|${batch_label}|${env_groups}|${group_size}")
+    EXPERIMENTS+=("${CURRENT_GROUP}|${filter}|${layout_label}|${env_groups}|${group_size}")
 }
 
 resolve_filter_selection() {
@@ -387,54 +389,54 @@ resolve_filter_selection() {
     fi
 }
 
-resolve_batch_size_selection() {
+resolve_group_layout_selection() {
     local raw="$1"
     if [ -z "$raw" ] || [ "$raw" = "all" ]; then
-        SELECTED_BATCH_SIZES=("${BATCH_SIZES[@]}")
+        SELECTED_GROUP_LAYOUTS=("${GROUP_LAYOUTS[@]}")
         return
     fi
     # Accept formats: 8x16,128x1 -> convert to 8:16,128:1
     IFS=',' read -r -a candidates <<< "$raw"
-    SELECTED_BATCH_SIZES=()
+    SELECTED_GROUP_LAYOUTS=()
     for candidate in "${candidates[@]}"; do
         candidate="${candidate// /}"
         # Convert 8x16 to 8:16
         candidate="${candidate//x/:}"
         local valid=false
-        for bs in "${BATCH_SIZES[@]}"; do
+        for bs in "${GROUP_LAYOUTS[@]}"; do
             if [ "$bs" = "$candidate" ]; then
                 valid=true
                 break
             fi
         done
         if [ "$valid" = true ]; then
-            SELECTED_BATCH_SIZES+=("$candidate")
+            SELECTED_GROUP_LAYOUTS+=("$candidate")
         else
-            echo "Unknown batch size: $candidate (valid: ${BATCH_SIZES[*]//:/x})" >&2
+            echo "Unknown group layout: $candidate (valid: ${GROUP_LAYOUTS[*]//:/x})" >&2
             exit 1
         fi
     done
-    if [ ${#SELECTED_BATCH_SIZES[@]} -eq 0 ]; then
-        echo "No valid batch sizes selected via --batch-sizes" >&2
+    if [ ${#SELECTED_GROUP_LAYOUTS[@]} -eq 0 ]; then
+        echo "No valid group layouts selected via --group-layouts" >&2
         exit 1
     fi
 }
 
 resolve_filter_selection "$FILTERS_OPTION"
-resolve_batch_size_selection "$BATCH_SIZES_OPTION"
+resolve_group_layout_selection "$GROUP_LAYOUTS_OPTION"
 
-for bs in "${SELECTED_BATCH_SIZES[@]}"; do
-    IFS=':' read -r env_groups group_size <<< "$bs"
-    batch_label="${env_groups}x${group_size}"
-    set_group "Batch: ${batch_label}"
+for layout in "${SELECTED_GROUP_LAYOUTS[@]}"; do
+    IFS=':' read -r env_groups group_size <<< "$layout"
+    layout_label="${env_groups}x${group_size}"
+    set_group "Grouping: ${layout_label}"
     for filter in "${SELECTED_FILTERS[@]}"; do
-        add_experiment "$filter" "$batch_label" "$env_groups" "$group_size"
+        add_experiment "$filter" "$layout_label" "$env_groups" "$group_size"
     done
 done
 
-echo "Experiments: ${#EXPERIMENTS[@]} (batch sizes: ${SELECTED_BATCH_SIZES[*]//:/x} × filters: ${SELECTED_FILTERS[*]})" | tee -a "$LOG_FILE"
+echo "Experiments: ${#EXPERIMENTS[@]} (group layouts: ${SELECTED_GROUP_LAYOUTS[*]//:/x} × filters: ${SELECTED_FILTERS[*]})" | tee -a "$LOG_FILE"
 
-QUEUE_FILE=$(mktemp -t ragen_batch_size_queue.XXXXXX)
+QUEUE_FILE=$(mktemp -t ragen_grouping_queue.XXXXXX)
 QUEUE_LOCK="${QUEUE_FILE}.lock"
 echo 0 > "$QUEUE_FILE"
 USE_FLOCK=false
@@ -502,8 +504,8 @@ run_queue_for_slot() {
             break
         fi
         local exp="${EXPERIMENTS[$idx]}"
-        IFS='|' read -r exp_group filter batch_label env_groups group_size <<< "$exp"
-        run_experiment "$filter" "$batch_label" "$env_groups" "$group_size" "$gpu_list" || true
+        IFS='|' read -r exp_group filter layout_label env_groups group_size <<< "$exp"
+        run_experiment "$filter" "$layout_label" "$env_groups" "$group_size" "$gpu_list" || true
         if [ "$COOLDOWN_SECONDS" -gt 0 ]; then
             sleep "$COOLDOWN_SECONDS"
         fi
@@ -530,16 +532,16 @@ done
     for group_label in "${GROUP_LABELS[@]}"; do
         echo "=== ${group_label} ==="
         for exp in "${EXPERIMENTS[@]}"; do
-            IFS='|' read -r exp_group filter batch_label env_groups group_size <<< "$exp"
+            IFS='|' read -r exp_group filter layout_label env_groups group_size <<< "$exp"
             if [ "$exp_group" != "$group_label" ]; then
                 continue
             fi
-            name="${TASK}-PPO-${filter}-bs${batch_label}-${MODEL_NAME}"
-            task_dir="${RESULT_ROOT}/diff_batch_size_${TASK}_${MODEL_NAME}"
+            name="${TASK}-PPO-${filter}-grp${layout_label}-${MODEL_NAME}"
+            task_dir="${RESULT_ROOT}/diff_grouping_${TASK}_${MODEL_NAME}"
             if [ -f "${task_dir}/${name}.result" ]; then
                 cat "${task_dir}/${name}.result"
             else
-                echo "task=${TASK} | algo=PPO | filter=${filter} | batch=${batch_label} | model=${MODEL_NAME} | status=missing"
+                echo "task=${TASK} | algo=PPO | filter=${filter} | grouping=${layout_label} | model=${MODEL_NAME} | status=missing"
             fi
         done
     done
