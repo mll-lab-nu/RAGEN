@@ -53,7 +53,7 @@ from verl.utils.torch_functional import masked_mean
 
 from ragen.llm_agent.agent_proxy import LLMAgentProxy
 from ragen.utils import GenerationsLogger
-from ragen.trainer.pending_batch import build_pending_training_batch
+from ragen.trainer.pad_batch import build_padded_training_batch
 from ragen.trainer.rollout_filter import build_rollout_filter
 from ragen.trainer.collapse_metrics import CollapseDetector
 from ragen.trainer.gradient_reporter import run_gradient_analysis
@@ -139,11 +139,11 @@ def adjust_batch(batch: DataProto, size_divisor: int, mode: str = "copy") -> Dat
     return adjusted_batch
 
 
-def _normalize_batch_adjust_mode(mode: str, *, allow_pending: bool) -> str:
-    valid_modes = {"copy", "delete", "pending"}
+def _normalize_batch_adjust_mode(mode: str, *, allow_pad: bool) -> str:
+    valid_modes = {"copy", "delete", "pad"}
     if mode not in valid_modes:
         raise ValueError(f"Unsupported batch_adjust_mode: {mode}. Use one of {sorted(valid_modes)}.")
-    if mode == "pending" and not allow_pending:
+    if mode == "pad" and not allow_pad:
         return "copy"
     return mode
 
@@ -746,7 +746,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
         size_divisor = np.lcm.reduce([source_env_groups, ppo_mini_batch_size, n_gpus])
         adjust_mode = _normalize_batch_adjust_mode(
             getattr(self.config.agent_proxy, "batch_adjust_mode", "copy"),
-            allow_pending=False,
+            allow_pad=False,
         )
         batch = adjust_batch(batch, size_divisor, mode=adjust_mode)
         if metrics is not None and metrics_prefix is not None:
@@ -1201,13 +1201,13 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
                 self.consecutive_empty_filtered_steps = 0
 
-                # copy/delete modes adjust the real batch early; pending mode pads only the optimizer batch later
+                # copy/delete modes adjust the real batch early; pad mode pads only the optimizer batch later
                 num_groups = self.config.es_manager.train.env_groups
                 ppo_mini_batch_size = self.config.actor_rollout_ref.actor.ppo_mini_batch_size
                 n_gpus = self.config.trainer.n_gpus_per_node
                 adjust_mode = _normalize_batch_adjust_mode(
                     getattr(self.config.agent_proxy, "batch_adjust_mode", "copy"),
-                    allow_pending=True,
+                    allow_pad=True,
                 )
                 real_batch_size = batch.batch["input_ids"].shape[0]
                 if adjust_mode in ("copy", "delete"):
@@ -1438,16 +1438,16 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 metrics["trainer/gradient_analysis_only"] = float(gradient_analysis_only)
 
                 training_batch = batch
-                pending_count = 0
-                if adjust_mode == "pending" and not gradient_analysis_only:
-                    training_batch, pending_count = build_pending_training_batch(batch, ppo_mini_batch_size)
+                pad_count = 0
+                if adjust_mode == "pad" and not gradient_analysis_only:
+                    training_batch, pad_count = build_padded_training_batch(batch, ppo_mini_batch_size)
 
                 optimizer_batch_size = training_batch.batch["input_ids"].shape[0]
                 metrics.update({
                     "train/batch_size": optimizer_batch_size,
                     "train/optimizer_batch_size": optimizer_batch_size,
-                    "train/pending_count": pending_count,
-                    "train/pending_ratio": (pending_count / optimizer_batch_size) if optimizer_batch_size > 0 else 0.0,
+                    "train/pad_count": pad_count,
+                    "train/pad_ratio": (pad_count / optimizer_batch_size) if optimizer_batch_size > 0 else 0.0,
                     "train/num_mini_batches": math.ceil(optimizer_batch_size / ppo_mini_batch_size),
                 })
 

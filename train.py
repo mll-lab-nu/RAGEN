@@ -130,7 +130,7 @@ def add_dependency_and_validate_config(config):
 
     # validate config
     batch_adjust_mode = getattr(config.agent_proxy, "batch_adjust_mode", "copy")
-    valid_batch_adjust_modes = {"copy", "delete", "pending"}
+    valid_batch_adjust_modes = {"copy", "delete", "pad"}
     if batch_adjust_mode not in valid_batch_adjust_modes:
         raise ValueError(
             f"agent_proxy.batch_adjust_mode must be one of {sorted(valid_batch_adjust_modes)}, got {batch_adjust_mode}"
@@ -158,15 +158,15 @@ def add_dependency_and_validate_config(config):
         # For min_p or others, we can't easily predict. Assume 1.0 for validation or skip.
         effective_ratio = 1.0
 
-    if batch_adjust_mode == "pending":
+    if batch_adjust_mode == "pad":
         if config.actor_rollout_ref.actor.get("use_dynamic_bsz", False) or config.critic.get("use_dynamic_bsz", False):
-            raise ValueError("batch_adjust_mode=pending does not support use_dynamic_bsz=True")
+            raise ValueError("batch_adjust_mode=pad does not support use_dynamic_bsz=True")
 
-    if batch_adjust_mode != "pending" and context_window_mode in ("single_turn", "limited_multi_turn"):
+    if batch_adjust_mode != "pad" and context_window_mode in ("single_turn", "limited_multi_turn"):
         # In these modes, each turn becomes a separate sample, so we need more samples
         assert config.es_manager.train.env_groups * config.es_manager.train.group_size * effective_ratio * config.agent_proxy.max_turn >= config.ppo_mini_batch_size, \
             f"env_groups * group_size * effective_ratio * max_turn ({config.es_manager.train.env_groups * config.es_manager.train.group_size * effective_ratio * config.agent_proxy.max_turn}) must be greater than or equal to ppo_mini_batch_size ({config.ppo_mini_batch_size})"
-    elif batch_adjust_mode != "pending":
+    elif batch_adjust_mode != "pad":
         assert config.es_manager.train.env_groups * config.es_manager.train.group_size * effective_ratio >= config.ppo_mini_batch_size, \
             f"env_groups * group_size * effective_ratio ({config.es_manager.train.env_groups * config.es_manager.train.group_size * effective_ratio}) must be greater than or equal to ppo_mini_batch_size ({config.ppo_mini_batch_size})."
     assert config.algorithm.bi_level_gae == False or config.algorithm.adv_estimator == "gae", "BI_LEVEL_GAE is enabled, so config.algorithm.adv_estimator should be set to gae"

@@ -38,7 +38,7 @@ from verl.workers.actor import BasePPOActor
 
 from peft import PeftModel
 
-from ragen.trainer.pending_batch import get_pending_seq_mean_scale
+from ragen.trainer.pad_batch import get_pad_seq_mean_scale
 
 
 __all__ = ["DataParallelPPOActor"]
@@ -270,8 +270,8 @@ class DataParallelPPOActor(BasePPOActor):
         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
 
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages", "response_mask"]
-        if "pending_mask" in data.batch.keys():
-            select_keys.append("pending_mask")
+        if "pad_mask" in data.batch.keys():
+            select_keys.append("pad_mask")
         if self.config.use_kl_loss:
             select_keys.append("ref_log_prob")
         batch = data.select(batch_keys=select_keys).batch
@@ -329,7 +329,7 @@ class DataParallelPPOActor(BasePPOActor):
                             # response_mask = attention_mask[:, -response_length:]
                             old_log_prob = data["old_log_probs"]
                             advantages = data["advantages"]
-                            pending_mask = data.get("pending_mask", None)
+                            pad_mask = data.get("pad_mask", None)
 
                             clip_ratio = self.config.clip_ratio
                             clip_ratio_low = self.config.clip_ratio_low if self.config.clip_ratio_low is not None else clip_ratio
@@ -352,8 +352,8 @@ class DataParallelPPOActor(BasePPOActor):
                                 clip_ratio_c=clip_ratio_c,
                                 loss_agg_mode=loss_agg_mode,
                             )
-                            seq_loss_scale = get_pending_seq_mean_scale(
-                                pending_mask=pending_mask,
+                            seq_loss_scale = get_pad_seq_mean_scale(
+                                pad_mask=pad_mask,
                                 loss_agg_mode=loss_agg_mode,
                                 configured_mini_batch_size=self.config.ppo_mini_batch_size,
                             )
@@ -426,7 +426,7 @@ class DataParallelPPOActor(BasePPOActor):
                         # response_mask = attention_mask[:, -response_length:]
                         old_log_prob = data["old_log_probs"]
                         advantages = data["advantages"]
-                        pending_mask = data.get("pending_mask", None)
+                        pad_mask = data.get("pad_mask", None)
 
                         clip_ratio = self.config.clip_ratio
                         clip_ratio_low = self.config.clip_ratio_low if self.config.clip_ratio_low is not None else clip_ratio
@@ -452,8 +452,8 @@ class DataParallelPPOActor(BasePPOActor):
                             clip_ratio_c=clip_ratio_c,
                             loss_agg_mode=loss_agg_mode,
                         )
-                        seq_loss_scale = get_pending_seq_mean_scale(
-                            pending_mask=pending_mask,
+                        seq_loss_scale = get_pad_seq_mean_scale(
+                            pad_mask=pad_mask,
                             loss_agg_mode=loss_agg_mode,
                             configured_mini_batch_size=self.config.ppo_mini_batch_size,
                         )
