@@ -22,7 +22,6 @@ PAD_ZERO_BATCH_KEYS: tuple[str, ...] = (
 SEQ_MEAN_LOSS_AGG_MODES = {
     "seq-mean-token-sum",
     "seq-mean-token-mean",
-    "seq-mean-token-sum-norm",
 }
 
 
@@ -75,18 +74,18 @@ def build_padded_training_batch(
 def get_pad_seq_mean_scale(
     pad_mask: torch.Tensor | None,
     loss_agg_mode: str,
-    configured_mini_batch_size: int,
+    configured_micro_batch_size: int,
 ) -> float:
-    """Scale seq-mean losses so pad rows still count toward the configured mini-batch denominator."""
+    """Scale seq-mean losses so each trajectory keeps its original mini-batch weight."""
     if pad_mask is None or loss_agg_mode not in SEQ_MEAN_LOSS_AGG_MODES:
         return 1.0
 
-    if configured_mini_batch_size <= 0:
-        raise ValueError(f"configured_mini_batch_size must be positive, got {configured_mini_batch_size}")
+    if configured_micro_batch_size <= 0:
+        raise ValueError(f"configured_micro_batch_size must be positive, got {configured_micro_batch_size}")
 
     pad_mask = pad_mask.to(dtype=torch.bool).reshape(-1)
     if not pad_mask.any().item():
         return 1.0
 
     real_batch_size = (~pad_mask).sum().item()
-    return float(real_batch_size) / float(configured_mini_batch_size)
+    return float(real_batch_size) / float(configured_micro_batch_size)

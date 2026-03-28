@@ -355,7 +355,7 @@ class DataParallelPPOActor(BasePPOActor):
                             seq_loss_scale = get_pad_seq_mean_scale(
                                 pad_mask=pad_mask,
                                 loss_agg_mode=loss_agg_mode,
-                                configured_mini_batch_size=self.config.ppo_mini_batch_size,
+                                configured_micro_batch_size=self.config.ppo_micro_batch_size_per_gpu,
                             )
                             pg_loss = pg_loss * seq_loss_scale
 
@@ -455,7 +455,7 @@ class DataParallelPPOActor(BasePPOActor):
                         seq_loss_scale = get_pad_seq_mean_scale(
                             pad_mask=pad_mask,
                             loss_agg_mode=loss_agg_mode,
-                            configured_mini_batch_size=self.config.ppo_mini_batch_size,
+                            configured_micro_batch_size=self.config.ppo_micro_batch_size_per_gpu,
                         )
                         pg_loss = pg_loss * seq_loss_scale
 

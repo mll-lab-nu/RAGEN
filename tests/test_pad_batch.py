@@ -84,9 +84,25 @@ def test_build_padded_training_batch_is_noop_when_already_divisible():
 
 
 def test_pad_seq_mean_scale_only_applies_to_seq_mean_modes():
-    pad_mask = torch.tensor([False, False] + [True] * 30)
+    pad_mask = torch.tensor([False, False, True, True])
 
-    assert get_pad_seq_mean_scale(pad_mask, "seq-mean-token-mean", 32) == pytest.approx(2 / 32)
-    assert get_pad_seq_mean_scale(pad_mask, "seq-mean-token-sum", 32) == pytest.approx(2 / 32)
-    assert get_pad_seq_mean_scale(pad_mask, "token-mean", 32) == 1.0
-    assert get_pad_seq_mean_scale(torch.zeros(32, dtype=torch.bool), "seq-mean-token-mean", 32) == 1.0
+    assert get_pad_seq_mean_scale(pad_mask, "seq-mean-token-mean", 4) == pytest.approx(2 / 4)
+    assert get_pad_seq_mean_scale(pad_mask, "seq-mean-token-sum", 4) == pytest.approx(2 / 4)
+    assert get_pad_seq_mean_scale(pad_mask, "seq-mean-token-sum-norm", 4) == 1.0
+    assert get_pad_seq_mean_scale(pad_mask, "token-mean", 4) == 1.0
+    assert get_pad_seq_mean_scale(torch.zeros(4, dtype=torch.bool), "seq-mean-token-mean", 4) == 1.0
+
+
+def test_pad_seq_mean_scale_preserves_original_mini_batch_weighting():
+    micro_batch_size = 4
+    mini_batch_size = 32
+    gradient_accumulation = mini_batch_size // micro_batch_size
+    micro_batch_real_counts = [4, 4, 4, 4, 2, 0, 0, 0]
+
+    total_weight = 0.0
+    for real_count in micro_batch_real_counts:
+        pad_mask = torch.tensor([False] * real_count + [True] * (micro_batch_size - real_count), dtype=torch.bool)
+        scale = get_pad_seq_mean_scale(pad_mask, "seq-mean-token-mean", micro_batch_size)
+        total_weight += scale / gradient_accumulation
+
+    assert total_weight == pytest.approx(18 / 32)
