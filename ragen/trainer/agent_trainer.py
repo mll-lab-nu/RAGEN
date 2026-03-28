@@ -264,6 +264,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
         self.base_variance = None
         self.consecutive_variances = collections.deque(maxlen=10)
         self.consecutive_empty_filtered_steps = 0
+        self.consecutive_empty_after_adjust_steps = 0
         self.consecutive_low_success = collections.defaultdict(int)
         self.early_stopped = False
         self.early_stop_type = None
@@ -1139,6 +1140,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
                 if len(batch) == 0:
                     self.consecutive_empty_filtered_steps += 1
+                    self.consecutive_empty_after_adjust_steps = 0
                     empty_stop_steps = getattr(
                         self.config.actor_rollout_ref.rollout,
                         "rollout_filter_empty_stop_steps",
@@ -1213,12 +1215,64 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 if adjust_mode in ("copy", "delete"):
                     size_divisor = np.lcm.reduce([num_groups, ppo_mini_batch_size, n_gpus])
                     batch = adjust_batch(batch, size_divisor, mode=adjust_mode)
+                    if len(batch) == 0:
+                        self.consecutive_empty_after_adjust_steps += 1
+                        empty_after_adjust_stop_steps = int(
+                            getattr(self.config.agent_proxy, "batch_adjust_empty_stop_steps", 5)
+                        )
+                        metrics.update(
+                            {
+                                "train/real_batch_size": real_batch_size,
+                                "train/batch_size": 0,
+                                "train/optimizer_batch_size": 0,
+                                "train/rollout_attempts": attempts,
+                                "rollout/empty_after_filter": 0.0,
+                                "rollout/consecutive_empty_after_filter_steps": 0.0,
+                                "train/empty_after_adjust": 1.0,
+                                "train/consecutive_empty_after_adjust_steps": float(
+                                    self.consecutive_empty_after_adjust_steps
+                                ),
+                            }
+                        )
+
+                        if (
+                            empty_after_adjust_stop_steps > 0
+                            and self.consecutive_empty_after_adjust_steps >= empty_after_adjust_stop_steps
+                        ):
+                            print(
+                                f"[Early Stopping] Batch adjustment removed all samples for "
+                                f"{self.consecutive_empty_after_adjust_steps} consecutive steps."
+                            )
+                            self.early_stopped = True
+                            self.early_stop_type = "empty_after_adjust_steps"
+                            metrics.update({self._early_stop_metric_key(): 1.0})
+                        else:
+                            print(
+                                f"[Warning] Batch adjustment removed all samples for this step. "
+                                f"Consecutive empty-after-adjust steps: "
+                                f"{self.consecutive_empty_after_adjust_steps}."
+                            )
+
+                        logger.log(data=metrics, step=self.global_steps)
+
+                        if self.early_stopped or is_last_step:
+                            _finish_logger()
+                            progress_bar.close()
+                            return
+
+                        progress_bar.update(1)
+                        self.global_steps += 1
+                        continue
+
+                self.consecutive_empty_after_adjust_steps = 0
 
                 metrics.update({
                     "train/real_batch_size": real_batch_size,
                     "train/rollout_attempts": attempts,
                     "rollout/empty_after_filter": 0.0,
                     "rollout/consecutive_empty_after_filter_steps": 0.0,
+                    "train/empty_after_adjust": 0.0,
+                    "train/consecutive_empty_after_adjust_steps": 0.0,
                 })
                 metrics.update({"train/" + key: value for key, value in batch.meta_info["metrics"].items()})
 
