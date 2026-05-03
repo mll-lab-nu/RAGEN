@@ -67,7 +67,7 @@ custom_envs:
       When you are exactly next to a box, you can push it by moving in the same direction.
       To push a box Down, you must be directly above it (player row < box row). To push a box Up, you must be directly below it (player row > box row). To push a box Right, you must be to its left (player col < box col). To push a box Left, you must be to its right (player col > box col).
       You cannot push a box through a wall, and you cannot pull a box.
-      The answer should be a single action, like <answer>Right</answer>.
+      The answer should be a sequence of actions, like <answer>Right || Right || Up</answer>.
       Before every action, read the current state carefully and begin your thinking with the exact coordinates:
       Player: (row, col) | Box: (row, col) | Target: (row, col)
       Then derive your move from these coordinates. Do not rely on memory of previous states.

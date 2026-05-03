@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=frozenlake
+#SBATCH --job-name=sokoban_v2
 #SBATCH --account=e52938
 #SBATCH --partition=gengpu
 #SBATCH --nodes=1
@@ -40,18 +40,26 @@ echo "Python:       ${PY}"
 echo "SLURM_JOB_ID: ${SLURM_JOB_ID}"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-unset}"
 
-EXP_NAME="frozenlake_grpo_0p5b"
+EXP_NAME="sokoban_grpo_0p5b_v2"
 
 "${PY}" train.py \
-    --config-name _3_frozen_lake \
+    --config-name _2_sokoban \
     model_path=Qwen/Qwen2.5-0.5B-Instruct \
     trainer.n_gpus_per_node=1 \
     micro_batch_size_per_gpu=8 \
     ppo_mini_batch_size=64 \
     es_manager.train.group_size=128 \
-    actor_rollout_ref.rollout.rollout_filter_value=0.9 \
+    custom_envs.CoordSokoban.env_config.min_solution_steps=[1,3] \
+    custom_envs.CoordSokoban.env_config.search_depth=5 \
+    custom_envs.CoordSokoban.env_config.distance_reward_coeff=0.3 \
+    es_manager.format_penalty=-0.5 \
+    es_manager.step_penalty=0.05 \
+    es_manager.think_quality_penalty=0.3 \
+    actor_rollout_ref.rollout.rollout_filter_value=0.40 \
     actor_rollout_ref.actor.entropy_coeff=0.01 \
-    actor_rollout_ref.rollout.max_model_len=4096 \
+    actor_rollout_ref.actor.use_kl_loss=True \
+    actor_rollout_ref.actor.kl_loss_coef=0.01 \
+    actor_rollout_ref.rollout.max_model_len=2048 \
     actor_rollout_ref.rollout.response_length=200 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.87 \
     trainer.total_training_steps=200 \
@@ -62,6 +70,7 @@ EXP_NAME="frozenlake_grpo_0p5b"
     system.CUDA_VISIBLE_DEVICES="0" \
     agent_proxy.context_window_mode=full \
     agent_proxy.max_context_window=-1 \
+    agent_proxy.max_actions_per_turn=2 \
     trainer.experiment_name="${EXP_NAME}" \
     "trainer.default_local_dir=${CKPT_ROOT}/checkpoints/\${trainer.project_name}/\${trainer.experiment_name}" \
     > "/home/eiu4164/projects/RAGEN/logs/${EXP_NAME}.${SLURM_JOB_ID}.log" 2>&1

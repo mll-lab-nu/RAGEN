@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:h100:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
-#SBATCH --time=8:00:00
+#SBATCH --time=6:00:00
 #SBATCH --output=/home/eiu4164/projects/RAGEN/logs/%x_%j.out
 #SBATCH --error=/home/eiu4164/projects/RAGEN/logs/%x_%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL

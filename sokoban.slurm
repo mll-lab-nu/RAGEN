@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=frozenlake
+#SBATCH --job-name=sokoban
 #SBATCH --account=e52938
 #SBATCH --partition=gengpu
 #SBATCH --nodes=1
@@ -40,10 +40,10 @@ echo "Python:       ${PY}"
 echo "SLURM_JOB_ID: ${SLURM_JOB_ID}"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-unset}"
 
-EXP_NAME="frozenlake_grpo_0p5b"
+EXP_NAME="sokoban_grpo_0p5b"
 
 "${PY}" train.py \
-    --config-name _3_frozen_lake \
+    --config-name _2_sokoban \
     model_path=Qwen/Qwen2.5-0.5B-Instruct \
     trainer.n_gpus_per_node=1 \
     micro_batch_size_per_gpu=8 \
@@ -51,7 +51,7 @@ EXP_NAME="frozenlake_grpo_0p5b"
     es_manager.train.group_size=128 \
     actor_rollout_ref.rollout.rollout_filter_value=0.9 \
     actor_rollout_ref.actor.entropy_coeff=0.01 \
-    actor_rollout_ref.rollout.max_model_len=4096 \
+    actor_rollout_ref.rollout.max_model_len=2048 \
     actor_rollout_ref.rollout.response_length=200 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.87 \
     trainer.total_training_steps=200 \
