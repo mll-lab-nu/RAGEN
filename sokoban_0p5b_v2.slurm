@@ -70,7 +70,7 @@ EXP_NAME="sokoban_grpo_0p5b_v2"
     system.CUDA_VISIBLE_DEVICES="0" \
     agent_proxy.context_window_mode=full \
     agent_proxy.max_context_window=-1 \
-    agent_proxy.max_actions_per_turn=2 \
+    agent_proxy.max_actions_per_turn=1 \
     trainer.experiment_name="${EXP_NAME}" \
     "trainer.default_local_dir=${CKPT_ROOT}/checkpoints/\${trainer.project_name}/\${trainer.experiment_name}" \
     > "/home/eiu4164/projects/RAGEN/logs/${EXP_NAME}.${SLURM_JOB_ID}.log" 2>&1
