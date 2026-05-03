@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=bandit
-#SBATCH --account=p32139
+#SBATCH --account=e52938
 #SBATCH --partition=gengpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -49,7 +49,7 @@ EXP_NAME="bandit_grpo_0p5b"
     micro_batch_size_per_gpu=8 \
     ppo_mini_batch_size=64 \
     es_manager.train.group_size=128 \
-    actor_rollout_ref.rollout.rollout_filter_ratio=0.10 \
+    actor_rollout_ref.rollout.rollout_filter_value=0.10 \
     actor_rollout_ref.actor.entropy_coeff=0.01 \
     actor_rollout_ref.rollout.max_model_len=2048 \
     actor_rollout_ref.rollout.response_length=500 \
