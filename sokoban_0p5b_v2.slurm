@@ -50,6 +50,7 @@ EXP_NAME="sokoban_grpo_0p5b_v2"
     ppo_mini_batch_size=64 \
     es_manager.train.group_size=128 \
     custom_envs.CoordSokoban.env_config.min_solution_steps=[1,3] \
+    custom_envs.CoordSokoban.env_config.search_depth=5 \
     custom_envs.CoordSokoban.env_config.distance_reward_coeff=0.3 \
     es_manager.format_penalty=-0.5 \
     es_manager.step_penalty=0.05 \
