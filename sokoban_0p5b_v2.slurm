@@ -46,7 +46,7 @@ EXP_NAME="sokoban_grpo_0p5b_v2"
     --config-name _2_sokoban \
     model_path=Qwen/Qwen2.5-0.5B-Instruct \
     trainer.n_gpus_per_node=1 \
-    micro_batch_size_per_gpu=8 \
+    micro_batch_size_per_gpu=4 \
     ppo_mini_batch_size=64 \
     es_manager.train.group_size=128 \
     custom_envs.CoordSokoban.env_config.min_solution_steps=[1,3] \
