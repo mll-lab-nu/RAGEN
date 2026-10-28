@@ -31,6 +31,7 @@
 
 ## News
 
+- **2026.5.27.** We release [BAGEN (Budget-Aware Agent)](https://github.com/mll-lab-nu/BAGEN), built on RAGEN: a benchmark and training framework for budget-aware LLM agents that estimate their remaining token, time, and money cost mid-task. See the [project page](https://ragen-ai.github.io/bagen/).
 - **2026.3.12.** We are excited to release <font color="#DC143C">RAGEN-2</font>! We introduce a systematic study of reasoning collapse in agent RL and lightweight interventions for stable training. See the [<font color="#DC143C">v2 paper</font>](https://ragen-ai.github.io/v2).
 - **2025.4.20.** RAGEN V1 [paper](https://arxiv.org/abs/2504.20073) published on arXiv.
 - **2025.1.27.** Initial RAGEN release. [Post](https://x.com/wzihanw/status/1884092805598826609).
@@ -177,6 +178,7 @@ We are actively developing the next generation of RAGEN infrastructure and diagn
 
 ## Awesome Work Powered or Inspired by RAGEN
 
+- [BAGEN](https://github.com/mll-lab-nu/BAGEN): Budget-Aware Agent benchmark and training for LLM agents ![GitHub Repo stars](https://img.shields.io/github/stars/mll-lab-nu/BAGEN?style=social)
 - [ROLL](https://github.com/alibaba/ROLL): Efficient Scaling Library for RL with LLMs ![GitHub Repo stars](https://img.shields.io/github/stars/alibaba/ROLL?style=social)
 - [VAGEN](https://github.com/RAGEN-AI/VAGEN): Training Visual Agents with multi-turn RL ![GitHub Repo stars](https://img.shields.io/github/stars/RAGEN-AI/VAGEN?style=social)
 - [Search-R1](https://github.com/PeterGriffinJin/Search-R1): Train LLMs to reason and call a search engine with RL ![GitHub Repo stars](https://img.shields.io/github/stars/PeterGriffinJin/Search-R1?style=social)
